@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: #0b0f19;
+  color: #e5eaf4;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  min-height: 100vh;
+}
+
+@layer components {
+  .card {
+    @apply bg-panel rounded-xl border border-border p-4;
+  }
+  .card-sub {
+    @apply bg-panel2 rounded-lg border border-border p-3;
+  }
+  .btn {
+    @apply px-3 py-1.5 rounded-md border border-border bg-panel2 hover:bg-panel text-sm transition-colors;
+  }
+  .btn-primary {
+    @apply px-3 py-1.5 rounded-md bg-accent text-bg font-semibold text-sm hover:brightness-110 transition;
+  }
+  .btn-good {
+    @apply px-3 py-1.5 rounded-md bg-good/20 text-good text-sm border border-good/30 hover:bg-good/30 transition;
+  }
+  .chip {
+    @apply text-xs px-2 py-0.5 rounded-full border border-border bg-panel2 text-muted;
+  }
+  .chip-confirmed { @apply text-good border-good/30 bg-good/10; }
+  .chip-stale     { @apply text-warn border-warn/30 bg-warn/10; }
+  .chip-draft     { @apply text-muted; }
+  .input {
+    @apply bg-bg border border-border rounded-md px-2.5 py-1.5 text-sm w-full focus:outline-none focus:border-accent;
+  }
+  .label { @apply text-xs uppercase tracking-wide text-muted; }
+  .divider { @apply h-px bg-border my-3; }
+  .kbd {
+    @apply bg-panel2 border border-border rounded px-1.5 py-0.5 text-xs font-mono text-muted;
+  }
+}

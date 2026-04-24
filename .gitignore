@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env*.local
+.DS_Store
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+.e2e-data
+/coverage
+/test-results
+/playwright-report
+/playwright/.cache
+tsconfig.tsbuildinfo

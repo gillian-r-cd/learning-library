@@ -16,6 +16,15 @@ interface Props {
   onClose: () => void;
 }
 
+const ARTIFACT_TYPE_LABEL: Record<string, string> = {
+  narrative: "文本",
+  fields: "档案",
+  series: "记录",
+  list: "清单",
+  table: "表格",
+  hierarchy: "结构",
+};
+
 export default function ArtifactModal({
   artifactId,
   name,
@@ -39,20 +48,20 @@ export default function ArtifactModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-stone-900/30 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="artifact-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel rounded-xl border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-white rounded-[1.5rem] border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-          <span className="text-2xl">🎒</span>
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-panel2/60">
+          <span className="text-2xl">📁</span>
           <div className="flex-1">
             <div className="font-semibold">{name}</div>
             <div className="text-xs text-muted">
-              {artifactId} · <span className="chip">{type}</span>
+              已收进文件夹 · <span className="chip">{ARTIFACT_TYPE_LABEL[type] ?? "文件"}</span>
             </div>
           </div>
           {sorted.length > 1 && (

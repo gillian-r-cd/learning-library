@@ -31,7 +31,7 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
       </div>
 
       {/* overall bar */}
-      <div className="mt-2 h-2 rounded-full bg-panel2 overflow-hidden">
+      <div className="mt-2 h-2.5 rounded-full bg-white border border-border overflow-hidden">
         <div
           className="h-full bg-accent transition-all"
           style={{ width: `${percent}%` }}
@@ -49,7 +49,7 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
               key={chap.chapter_id}
               className={
                 chap.chapter_status === "current"
-                  ? "card-sub !border-accent"
+                  ? "card-sub !border-accent/30 !bg-blue-50"
                   : chap.chapter_status === "completed"
                   ? "card-sub opacity-70"
                   : "card-sub"

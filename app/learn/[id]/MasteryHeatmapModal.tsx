@@ -8,9 +8,9 @@ interface Props {
 }
 
 const GRADE_COLOR: Record<string, string> = {
-  good: "bg-good/30 border-good/60 text-good",
-  medium: "bg-warn/20 border-warn/50 text-warn",
-  poor: "bg-bad/20 border-bad/50 text-bad",
+  good: "bg-green-50 border-good/35 text-good",
+  medium: "bg-amber-50 border-warn/35 text-warn",
+  poor: "bg-red-50 border-bad/30 text-bad",
 };
 
 const GRADE_LABEL: Record<string, string> = {
@@ -35,15 +35,15 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-stone-900/30 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="mastery-heatmap-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel/95 rounded-2xl border border-good/30 max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+        className="bg-white/95 rounded-[1.5rem] border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-green-50/70">
           <div className="flex-1">
             <div className="font-semibold">能力地图</div>
             <div className="text-xs text-muted">
@@ -90,14 +90,14 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
                       if (!cell) return <td key={c} className="py-2 px-2" />;
                       const color = cell.best_grade
                         ? GRADE_COLOR[cell.best_grade]
-                        : "bg-panel2 border-border text-muted/60";
+                        : "bg-white border-border text-muted/60";
                       const label = cell.best_grade
                         ? GRADE_LABEL[cell.best_grade]
                         : "未触及";
                       return (
                         <td key={c} className="py-2 px-1">
                           <button
-                            className={`w-full rounded-md border p-2 text-center transition-colors hover:brightness-110 ${color}`}
+                            className={`w-full rounded-xl border p-2 text-center transition-all hover:-translate-y-0.5 ${color}`}
                             onClick={() => setSelected(cell)}
                             data-test-id={`mastery-cell-${a.action_id}-${c}`}
                           >
@@ -117,7 +117,7 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
         </div>
         {selected && (
           <div
-            className="border-t border-border p-4 bg-panel2"
+            className="border-t border-border p-4 bg-panel2/70"
             data-test-id="mastery-cell-detail"
           >
             <div className="flex items-center gap-2">

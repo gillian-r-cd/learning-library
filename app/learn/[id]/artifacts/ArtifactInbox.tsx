@@ -8,6 +8,15 @@ interface Props {
   onClose: () => void;
 }
 
+const ARTIFACT_TYPE_LABEL: Record<string, string> = {
+  narrative: "文本",
+  fields: "档案",
+  series: "记录",
+  list: "清单",
+  table: "表格",
+  hierarchy: "结构",
+};
+
 export default function ArtifactInbox({ groups, onClose }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const openGroup = groups.find((g) => g.artifact_id === openId) ?? null;
@@ -15,16 +24,16 @@ export default function ArtifactInbox({ groups, onClose }: Props) {
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-stone-900/25 backdrop-blur-sm"
         data-test-id="artifact-inbox-backdrop"
         onClick={onClose}
       />
       <aside
-        className="fixed right-0 top-0 bottom-0 w-[400px] max-w-full z-50 bg-panel/95 border-l border-accent/30 flex flex-col shadow-2xl"
+        className="fixed right-0 top-0 bottom-0 w-[400px] max-w-full z-50 bg-white/95 border-l border-border flex flex-col shadow-2xl"
         data-test-id="artifact-inbox"
       >
-        <div className="border-b border-border px-4 py-3 flex items-center gap-2">
-          <span className="font-semibold">道具箱</span>
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2 bg-panel2/60">
+          <span className="font-semibold">文件夹</span>
           <span className="chip">{groups.length} 件</span>
           <button className="btn text-xs ml-auto" onClick={onClose} data-test-id="artifact-inbox-close">
             关闭
@@ -41,14 +50,14 @@ export default function ArtifactInbox({ groups, onClose }: Props) {
             return (
               <button
                 key={g.artifact_id}
-                className="card-sub w-full text-left hover:border-accent/60 transition-colors"
+                className="card-sub w-full text-left hover:border-amber-300 hover:-translate-y-0.5 transition-all"
                 data-test-id={`artifact-inbox-item-${g.artifact_id}`}
                 onClick={() => setOpenId(g.artifact_id)}
               >
                 <div className="flex items-center gap-2">
                   <span>{g.icon_hint ?? "🎒"}</span>
                   <span className="font-semibold text-sm">{g.name}</span>
-                  <span className="chip">{g.type}</span>
+                  <span className="chip">{ARTIFACT_TYPE_LABEL[g.type] ?? "文件"}</span>
                   {g.versions.length > 1 && (
                     <span className="chip chip-stale">{g.versions.length} 个版本</span>
                   )}

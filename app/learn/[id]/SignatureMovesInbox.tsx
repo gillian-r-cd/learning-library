@@ -15,15 +15,15 @@ export default function SignatureMovesInbox({ library, onClose }: Props) {
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-stone-900/25 backdrop-blur-sm"
         data-test-id="signature-moves-backdrop"
         onClick={onClose}
       />
       <aside
-        className="fixed right-0 top-0 bottom-0 w-[440px] max-w-full z-50 bg-panel/95 border-l border-good/30 flex flex-col shadow-2xl"
+        className="fixed right-0 top-0 bottom-0 w-[440px] max-w-full z-50 bg-white/95 border-l border-border flex flex-col shadow-2xl"
         data-test-id="signature-moves"
       >
-        <div className="border-b border-border px-4 py-3 flex items-center gap-2">
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2 bg-green-50/70">
           <span className="font-semibold">我的招式集</span>
           <span className="chip">
             {library.total_earned_count}/{library.total_moves}
@@ -94,7 +94,7 @@ function EarnedMoveCard({
 }) {
   return (
     <button
-      className="card-sub w-full text-left border-good/40 hover:border-good transition-colors"
+      className="card-sub w-full text-left border-good/25 hover:border-good/40 hover:-translate-y-0.5 transition-all"
       data-test-id={`move-earned-${card.move_id}`}
       onClick={onOpen}
     >
@@ -128,7 +128,7 @@ function LockedMoveCard({
 }) {
   return (
     <button
-      className="card-sub w-full text-left opacity-70 hover:opacity-100 hover:border-warn/60 transition-all"
+      className="card-sub w-full text-left opacity-75 hover:opacity-100 hover:border-warn/35 hover:-translate-y-0.5 transition-all"
       data-test-id={`move-locked-${card.move_id}`}
       onClick={onOpen}
     >
@@ -155,15 +155,15 @@ function MoveDetailModal({
   const isEarned = card.status === "earned";
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-stone-900/30 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="move-detail-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel rounded-xl border border-border max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-white rounded-[1.5rem] border border-border max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-green-50/70">
           <span className="text-3xl">⚔️</span>
           <div className="flex-1">
             <div className="font-semibold text-lg">{card.name}</div>
@@ -236,8 +236,7 @@ function MoveDetailModal({
             <section className="card-sub">
               <div className="label text-warn">如何获得</div>
               <div className="text-xs text-muted mt-1">
-                在练「{card.bound_action_names.join("、")}」的回合里，清晰地展示出这一招的定义所描述的认知模式——Judge
-                识别到即会奖励给你。
+                在练「{card.bound_action_names.join("、")}」的回合里，清晰地展示出这一招的定义所描述的认知模式，系统会把它奖励给你。
               </div>
             </section>
           )}

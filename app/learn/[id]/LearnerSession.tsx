@@ -86,6 +86,17 @@ const COMPLEXITY_LABEL: Record<string, string> = {
   high: "高压",
 };
 
+const SCAFFOLD_LABEL: Record<string, string> = {
+  worked_example: "范例",
+  contrastive_cases: "对照",
+  chunked_walkthrough: "拆步",
+  analogy_bridge: "类比",
+  retrieval_prompt: "回忆",
+  near_transfer_demo: "迁移",
+  concept_scaffold: "结构",
+  self_explanation: "复述",
+};
+
 export default function LearnerSession({
   learner,
   blueprint,
@@ -355,11 +366,11 @@ export default function LearnerSession({
 
   return (
     <div className="flex h-[calc(100vh-48px)] stage-shell">
-      <div className="flex-[3] flex flex-col border-r border-border">
-        <div className="border-b border-border/80 px-4 py-3 flex items-center gap-3 text-sm bg-bg/45 backdrop-blur">
+      <div className="flex-[3] flex flex-col border-r border-border/70 bg-white/35">
+        <div className="border-b border-border/80 px-5 py-3 flex items-center gap-3 text-sm bg-white/80 backdrop-blur shadow-sm">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="chip !border-accent/40 !text-accent">
+              <span className="chip !border-accent/20 !bg-accent-soft !text-accent">
                 {COMPLEXITY_LABEL[complexity] ?? complexity}
               </span>
               <span className="font-semibold truncate" data-test-id="challenge-title">
@@ -367,34 +378,26 @@ export default function LearnerSession({
               </span>
             </div>
             <div className="text-[11px] text-muted mt-0.5">
-              第 {snapshot.learner.position.turn_idx + 1} 次尝试 · 旅程 {journeyPercent}%
+              第 {snapshot.learner.position.turn_idx + 1} 次尝试 · 旅程推进 {journeyPercent}%
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button
-              className="btn text-xs"
+              className="btn text-xs !bg-amber-50 !border-warn/25"
               onClick={() => setShowPoints(true)}
               data-test-id="open-points-breakdown"
               aria-label="查看点数明细"
             >
-              点数 <span className="text-warn font-semibold" data-test-id="points-total">{totalPts}</span>
+              可用点数 <span className="text-warn font-semibold" data-test-id="points-total">{totalPts}</span>
               <span className="text-muted"> · 稳固 </span>
               <span className="text-good" data-test-id="points-effective">{effPts}</span>
-            </button>
-            <button
-              className="btn-primary text-xs"
-              onClick={() => setShowInbox(true)}
-              data-test-id="open-growth-backpack"
-              aria-label="打开成长背包"
-            >
-              成长背包
             </button>
           </div>
           <div className="hidden">
             <span data-test-id="conv-count">{msgs.length} 条</span>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-3 text-sm" ref={scrollRef}>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm" ref={scrollRef}>
           {msgs.length === 0 && (
             <div className="text-muted text-xs">
               还没有对话。你的行动、旁白、伴学和成长瞬间都会出现在这里。
@@ -415,7 +418,7 @@ export default function LearnerSession({
         />
         <HelpBar busy={busy} onRequestHelp={requestHelp} />
       </div>
-      <div className="flex-[2] overflow-y-auto p-4 space-y-3 bg-bg/20">
+      <div className="flex-[2] overflow-y-auto p-5 space-y-4 bg-panel2/55">
         <GrowthRail
           blueprint={blueprint}
           snapshot={snapshot}
@@ -484,7 +487,7 @@ function HelpBar({
   onRequestHelp: (kind: HelpRequest["kind"]) => void;
 }) {
   return (
-    <div className="border-t border-border/80 px-4 py-3 bg-bg/45 flex flex-wrap items-center gap-2 text-xs">
+    <div className="border-t border-border/80 px-5 py-3 bg-white/70 flex flex-wrap items-center gap-2 text-xs">
       <span className="text-muted">卡住时可以用点数换帮助：</span>
       {(["hint", "example", "reveal"] as const).map((kind) => {
         const label = helpRequestLabel(kind);
@@ -558,26 +561,26 @@ function GrowthRail({
             {blueprint.topic ?? "这段学习"}的旅程正在成形
           </h2>
           <p className="text-xs text-muted mt-1">
-            每一次回答都会变成分数、证据、道具或新的能力线索。
+            每一次回答都会沉淀成道具、招式、伴学和能力线索。
           </p>
         </div>
-        <button className="btn text-xs" onClick={onOpenPoints}>
+        <button className="btn text-xs !bg-amber-50 !border-warn/25" onClick={onOpenPoints}>
           点数明细
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-2 mt-4 text-xs">
         <button
-          className="card-sub text-left hover:border-accent/60 transition-colors"
+          className="card-sub text-left hover:border-accent/40 hover:-translate-y-0.5 transition-all"
           onClick={onOpenArtifacts}
           data-test-id="open-artifact-inbox"
         >
-          <div className="text-muted">道具库</div>
+          <div className="text-muted">文件夹</div>
           <div className="text-xl font-semibold mt-1">{droppedArtifacts.length}</div>
           <div className="text-[11px] text-muted">{artifactVersions} 个版本沉淀</div>
         </button>
         <button
-          className="card-sub text-left hover:border-accent/60 transition-colors"
+          className="card-sub text-left hover:border-good/35 hover:-translate-y-0.5 transition-all"
           onClick={onOpenMoves}
           data-test-id="open-signature-moves"
         >
@@ -588,7 +591,7 @@ function GrowthRail({
           <div className="text-[11px] text-muted">可复用的行动套路</div>
         </button>
         <button
-          className="card-sub text-left hover:border-accent/60 transition-colors"
+          className="card-sub text-left hover:border-violet-300 hover:-translate-y-0.5 transition-all"
           onClick={onOpenCompanions}
           data-test-id="open-companion-library"
         >
@@ -603,7 +606,7 @@ function GrowthRail({
           </div>
         </button>
         <button
-          className="card-sub text-left hover:border-accent/60 transition-colors"
+          className="card-sub text-left hover:border-good/35 hover:-translate-y-0.5 transition-all"
           onClick={onOpenHeatmap}
           data-test-id="open-mastery-heatmap"
         >
@@ -622,7 +625,7 @@ function GrowthRail({
             {completed}/{total}
           </span>
         </div>
-        <div className="h-2 rounded-full bg-border overflow-hidden">
+        <div className="h-2.5 rounded-full bg-white border border-border overflow-hidden">
           <div
             className="h-full rounded-full bg-accent transition-all"
             style={{ width: `${total > 0 ? (completed / total) * 100 : 0}%` }}
@@ -651,7 +654,7 @@ function DeveloperDetails({
   evidence: EvidenceEntry[];
 }) {
   return (
-    <section className="card border-border/70" data-test-id="developer-details">
+    <section className="card border-slate-200 bg-slate-50/80" data-test-id="developer-details">
       <button
         className="w-full flex items-center justify-between text-left"
         onClick={onToggle}
@@ -668,7 +671,7 @@ function DeveloperDetails({
       {open && (
         <div className="mt-3 space-y-3">
           {lastJudge && (
-            <div className="card-sub">
+            <div className="card-sub bg-white">
               <div className="flex items-center justify-between">
                 <div className="label">Judge 最近一次输出</div>
                 <button className="text-xs text-accent" onClick={onToggleJudge}>
@@ -682,7 +685,7 @@ function DeveloperDetails({
               )}
             </div>
           )}
-          <div className="card-sub">
+          <div className="card-sub bg-white">
             <div className="label">Evidence（最近 10 条）</div>
             <ul className="text-xs mt-2 space-y-2">
               {evidence.slice(0, 10).map((e) => (
@@ -722,7 +725,7 @@ function ArcStageIndicator({
     ? stages.find((s) => s.id === chapter.arc_stage_id) ?? null
     : null;
   return (
-    <div className="mt-4 rounded-2xl border border-border/70 bg-bg/30 p-3" data-test-id="arc-stage-indicator">
+    <div className="mt-4 rounded-2xl border border-border/70 bg-white/70 p-3" data-test-id="arc-stage-indicator">
       <div className="flex items-center gap-2">
         <span className="label">故事阶段</span>
         {current && (
@@ -745,7 +748,7 @@ function ArcStageIndicator({
                 isCurrent
                   ? "chip-confirmed"
                   : passed
-                  ? "text-good border-good/30 bg-good/5"
+                  ? "text-good border-good/25 bg-green-50"
                   : "text-muted"
               }`}
               title={s.signature_question}
@@ -826,13 +829,31 @@ function MsgBubble({
     );
   }
   if (msg.role === "learner") {
+    const structured = parseStructuredLearnerMessage(msg.text);
     return (
       <div
-        className="rounded-2xl px-4 py-3 bg-accent/20 border border-accent/30 ml-auto max-w-[80%] text-right shadow-sm"
+        className="rounded-[1.35rem] px-4 py-3 bg-accent-soft border border-accent/20 ml-auto max-w-[80%] text-right shadow-sm"
         data-test-id="msg-learner"
       >
-        <div className="label mb-0.5">我的行动 · {tsLabel}</div>
-        <div className="whitespace-pre-wrap">{msg.text}</div>
+        <div className="label mb-1 !text-accent">我的行动 · {tsLabel}</div>
+        {structured ? (
+          <div className="text-left space-y-2">
+            <div className="font-semibold text-sm text-right">{structured.title}</div>
+            <div className="space-y-1.5">
+              {structured.rows.map((row) => (
+                <div
+                  key={row.label}
+                  className="rounded-xl border border-accent/15 bg-white/70 px-3 py-2 text-xs"
+                >
+                  <div className="text-muted">{row.label}</div>
+                  <div className="text-text mt-0.5 whitespace-pre-wrap">{row.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap">{msg.text}</div>
+        )}
       </div>
     );
   }
@@ -840,10 +861,10 @@ function MsgBubble({
     const isOpening = msg.metaKind === "challenge_opening";
     const isScaffold = msg.metaKind === "scaffold";
     const className = isOpening
-      ? "scene-card max-w-[88%]"
+      ? "scene-card max-w-[92%]"
       : isScaffold
-        ? "rounded-2xl px-4 py-3 bg-accent/10 border border-accent/30 max-w-[84%]"
-        : "rounded-2xl px-4 py-3 bg-panel border border-border max-w-[82%]";
+        ? "rounded-[1.35rem] px-4 py-3 bg-blue-50 border border-accent/20 max-w-[84%] shadow-sm"
+        : "rounded-[1.35rem] px-4 py-3 bg-white border border-border max-w-[82%] shadow-sm";
     return (
       <div
         className={className}
@@ -851,7 +872,7 @@ function MsgBubble({
           isOpening ? "msg-narrator-opening" : isScaffold ? "msg-narrator-scaffold" : "msg-narrator"
         }
       >
-        <div className="label mb-0.5 text-muted flex items-center gap-2">
+        <div className="label mb-1 text-muted flex items-center gap-2">
           <span>{isOpening ? "开场" : isScaffold ? "提示卡" : "旁白"} · {tsLabel}</span>
           {isOpening && msg.arcStageName && (
             <span
@@ -865,7 +886,9 @@ function MsgBubble({
             <span className="chip text-[10px]">新一幕</span>
           )}
           {isScaffold && msg.scaffoldStrategy && (
-            <span className="chip text-[10px]">{msg.scaffoldStrategy}</span>
+            <span className="chip text-[10px]">
+              {SCAFFOLD_LABEL[msg.scaffoldStrategy] ?? "提示"}
+            </span>
           )}
         </div>
         <div className="whitespace-pre-wrap">{msg.text}</div>
@@ -875,10 +898,10 @@ function MsgBubble({
   if (msg.role === "companion") {
     return (
       <div
-        className="rounded-2xl px-4 py-3 bg-panel2 border border-warn/20 max-w-[82%]"
+        className="rounded-[1.35rem] px-4 py-3 bg-violet-50 border border-violet-200 max-w-[82%] shadow-sm"
         data-test-id="msg-companion"
       >
-        <div className="label mb-0.5 text-warn">{msg.who ?? "伴学"}来帮你 · {tsLabel}</div>
+        <div className="label mb-1 text-violet-700">{msg.who ?? "伴学"}来帮你 · {tsLabel}</div>
         <div className="whitespace-pre-wrap">{msg.text}</div>
       </div>
     );
@@ -930,9 +953,9 @@ function MsgBubble({
       </div>
     );
   }
-  let tone = "bg-panel2 border-border text-muted";
-  if (who === "orientation") tone = "bg-accent/10 border-accent/40 text-accent";
-  else if (who === "error" || who === "network") tone = "bg-bad/10 border-bad/40 text-bad";
+  let tone = "bg-white border-border text-muted";
+  if (who === "orientation") tone = "bg-blue-50 border-accent/25 text-accent";
+  else if (who === "error" || who === "network") tone = "bg-red-50 border-bad/25 text-bad";
   return (
     <div
       className={`rounded-lg px-3 py-1.5 border text-xs max-w-[90%] mx-auto text-center whitespace-pre-wrap ${tone}`}
@@ -941,4 +964,24 @@ function MsgBubble({
       {msg.text}
     </div>
   );
+}
+
+function parseStructuredLearnerMessage(text: string):
+  | { title: string; rows: { label: string; value: string }[] }
+  | null {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+  const title = lines[0].startsWith("我的提交：")
+    ? lines[0].replace(/^我的提交：/, "").trim()
+    : (lines[0].match(/^学员使用结构化框架「(.+)」作答：$/)?.[1] ?? "");
+  if (!title) return null;
+  const rows = lines
+    .slice(1)
+    .map((line) => line.match(/^-\s*([^：:]+)[：:](.*)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ label: match[1].trim(), value: match[2].trim() }));
+  return rows.length > 0 ? { title, rows } : null;
 }

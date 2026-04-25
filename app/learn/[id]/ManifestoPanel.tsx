@@ -34,7 +34,7 @@ export default function ManifestoPanel({
           return (
             <div
               key={seg.id}
-              className="card-sub"
+              className="card-sub bg-violet-50/70 border-violet-200"
               data-test-id={`manifesto-segment-${seg.chapter_id}`}
             >
               <button
@@ -60,7 +60,7 @@ export default function ManifestoPanel({
               </button>
               {isOpen && (
                 <>
-                  <div className="text-xs mt-2 whitespace-pre-wrap leading-relaxed italic">
+                  <div className="text-xs mt-2 whitespace-pre-wrap leading-relaxed italic text-violet-900">
                     {seg.text}
                   </div>
                   {seg.source_learner_quotes.length > 0 && (

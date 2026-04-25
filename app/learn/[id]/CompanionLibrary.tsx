@@ -32,6 +32,18 @@ const OUTPUT_LABEL: Record<string, string> = {
   scenario_override: "场景替换",
 };
 
+const TYPE_LABEL: Record<string, string> = {
+  npc_guide: "向导",
+  npc_traveler: "同行者",
+  npc_competitor: "挑战者",
+  npc_adversary: "反方角色",
+  case_pack: "案例包",
+  hidden_plotline: "隐藏线索",
+  difficulty_dial: "难度调节",
+  replay_lens: "回放镜头",
+  context_variant: "场景变体",
+};
+
 export default function CompanionLibraryPanel({ library, onClose }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const allCards: Array<UnlockedCompanionCard | LockedCompanionCard> = [
@@ -43,15 +55,15 @@ export default function CompanionLibraryPanel({ library, onClose }: Props) {
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-stone-900/25 backdrop-blur-sm"
         data-test-id="companion-library-backdrop"
         onClick={onClose}
       />
       <aside
-        className="fixed right-0 top-0 bottom-0 w-[440px] max-w-full z-50 bg-panel/95 border-l border-warn/30 flex flex-col shadow-2xl"
+        className="fixed right-0 top-0 bottom-0 w-[440px] max-w-full z-50 bg-white/95 border-l border-border flex flex-col shadow-2xl"
         data-test-id="companion-library"
       >
-        <div className="border-b border-border px-4 py-3 flex items-center gap-2">
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2 bg-violet-50/80">
           <span className="font-semibold">伴学库</span>
           <span className="chip">
             {library.unlocked.length}/{library.unlocked.length + library.locked.length}
@@ -122,7 +134,7 @@ function UnlockedCard({
 }) {
   return (
     <button
-      className="card-sub w-full text-left border-good/40 hover:border-good transition-colors"
+      className="card-sub w-full text-left border-violet-200 hover:border-violet-300 hover:-translate-y-0.5 transition-all"
       data-test-id={`companion-unlocked-${card.companion_id}`}
       onClick={onOpen}
     >
@@ -130,7 +142,7 @@ function UnlockedCard({
         <span>{TYPE_ICON[card.companion_type] ?? "👤"}</span>
         <span className="font-semibold">{card.display_name}</span>
         <span className="chip chip-confirmed">Lv.{card.level}</span>
-        <span className="chip">{card.companion_type}</span>
+        <span className="chip">{TYPE_LABEL[card.companion_type] ?? "伴学"}</span>
       </div>
       <div className="text-xs text-muted mt-1">
         {card.unique_value_hypothesis || "（独特价值未描述）"}
@@ -155,14 +167,14 @@ function LockedCard({
     : 0;
   return (
     <button
-      className="card-sub w-full text-left opacity-70 hover:opacity-100 hover:border-warn/60 transition-all"
+      className="card-sub w-full text-left opacity-75 hover:opacity-100 hover:border-violet-300 hover:-translate-y-0.5 transition-all"
       data-test-id={`companion-locked-${card.companion_id}`}
       onClick={onOpen}
     >
       <div className="flex items-center gap-2">
         <span className="grayscale">{TYPE_ICON[card.companion_type] ?? "👤"}</span>
         <span className="font-semibold text-muted">{card.display_name}</span>
-        <span className="chip">{card.companion_type}</span>
+        <span className="chip">{TYPE_LABEL[card.companion_type] ?? "伴学"}</span>
         <span className="ml-auto text-xs text-warn">
           差 {card.points_needed} 分解锁
         </span>
@@ -170,9 +182,9 @@ function LockedCard({
       <div className="text-xs text-muted mt-1">
         {card.unique_value_hypothesis || "（独特价值未描述）"}
       </div>
-      <div className="mt-2 h-1.5 bg-bg rounded-full overflow-hidden">
+      <div className="mt-2 h-1.5 bg-white border border-border rounded-full overflow-hidden">
         <div
-          className="h-full bg-warn/60"
+          className="h-full bg-violet-300"
           style={{ width: `${progressPct}%` }}
         />
       </div>
@@ -194,20 +206,20 @@ function CompanionDetailModal({
   const isLocked = card.status === "locked";
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-stone-900/30 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="companion-detail-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel rounded-xl border border-border max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-white rounded-[1.5rem] border border-border max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-violet-50/80">
           <span className="text-3xl">{TYPE_ICON[card.companion_type] ?? "👤"}</span>
           <div className="flex-1">
             <div className="font-semibold text-lg">{card.display_name}</div>
             <div className="text-xs text-muted">
-              {card.companion_type} · 输出形式：
+              {TYPE_LABEL[card.companion_type] ?? "伴学"} · 形式：
               {OUTPUT_LABEL[card.output_format] ?? card.output_format}
               {isLocked ? " · 未解锁" : ` · Lv.${(card as UnlockedCompanionCard).level}`}
             </div>
@@ -317,7 +329,7 @@ function CompanionDetailModal({
                 {(card as UnlockedCompanionCard).recent_speeches.map((s, i) => (
                   <li key={i} className="card-sub">
                     <div className="text-muted text-[10px]">
-                      turn {s.turn_idx} · {new Date(s.ts).toLocaleString()}
+                      第 {s.turn_idx + 1} 次尝试 · {new Date(s.ts).toLocaleString()}
                     </div>
                     <div className="mt-0.5 whitespace-pre-wrap">{s.text}</div>
                   </li>

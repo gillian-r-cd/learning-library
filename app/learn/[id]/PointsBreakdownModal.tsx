@@ -29,15 +29,15 @@ export default function PointsBreakdownModal({ breakdown, onClose }: Props) {
   const { entries, totals } = breakdown;
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-stone-900/30 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="points-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel/95 rounded-2xl border border-warn/30 max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+        className="bg-white/95 rounded-[1.5rem] border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-amber-50/80">
           <div className="flex-1">
             <div className="font-semibold">点数明细</div>
             <div className="text-xs text-muted">

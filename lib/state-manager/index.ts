@@ -181,6 +181,49 @@ export function saveLearnerState(s: LearnerState): LearnerState {
   return s;
 }
 
+export interface LearnerDeleteCounts {
+  learners: number;
+  conversation_log: number;
+  evidence_log: number;
+  ledger: number;
+}
+
+/** Hard-delete a learner and every log row tied to them. The schema has no
+ *  FOREIGN KEY constraints, so each table is dropped explicitly inside one
+ *  transaction. Does NOT touch the parent blueprint. */
+export function deleteLearner(learnerId: string): LearnerDeleteCounts {
+  return deleteLearners([learnerId]);
+}
+
+export function deleteLearners(learnerIds: string[]): LearnerDeleteCounts {
+  const counts: LearnerDeleteCounts = {
+    learners: 0,
+    conversation_log: 0,
+    evidence_log: 0,
+    ledger: 0,
+  };
+  if (learnerIds.length === 0) return counts;
+  const d = db();
+  const tx = d.transaction((ids: string[]) => {
+    for (const lid of ids) {
+      counts.conversation_log += d
+        .prepare(`DELETE FROM conversation_log WHERE learner_id = ?`)
+        .run(lid).changes;
+      counts.evidence_log += d
+        .prepare(`DELETE FROM evidence_log WHERE learner_id = ?`)
+        .run(lid).changes;
+      counts.ledger += d
+        .prepare(`DELETE FROM ledger WHERE learner_id = ?`)
+        .run(lid).changes;
+      counts.learners += d
+        .prepare(`DELETE FROM learner_states WHERE learner_id = ?`)
+        .run(lid).changes;
+    }
+  });
+  tx(learnerIds);
+  return counts;
+}
+
 // ---------- Snapshot for Judge ----------
 
 export interface Snapshot {

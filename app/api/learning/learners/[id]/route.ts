@@ -6,6 +6,7 @@ import {
   listConversation,
   ensureJourneyOrientation,
   listDroppedArtifacts,
+  deleteLearner,
 } from "@/lib/state-manager";
 import { getBlueprint } from "@/lib/blueprint";
 import { computeJourneyProgress } from "@/lib/learning-runtime/progress";
@@ -71,4 +72,16 @@ export async function GET(
     mastery_heatmap: masteryHeatmap,
     manifesto_segments: manifestoSegments,
   });
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  if (!getLearnerState(id)) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  const counts = deleteLearner(id);
+  return NextResponse.json({ ok: true, deleted: counts });
 }

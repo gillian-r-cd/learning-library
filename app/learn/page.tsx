@@ -6,17 +6,9 @@ import {
   lastConversationEntry,
 } from "@/lib/state-manager";
 import NewLearnerForm from "./NewLearnerForm";
+import LearnerList, { type LearnerRow } from "./LearnerList";
 
 export const dynamic = "force-dynamic";
-
-function relativeTime(ts: string): string {
-  const delta = Date.now() - new Date(ts).getTime();
-  if (delta < 60_000) return "刚刚 · just now";
-  if (delta < 3600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`;
-  const days = Math.floor(delta / 86_400_000);
-  return `${days} 天前`;
-}
 
 export default function LearnHome() {
   const bps = listBlueprints().filter((b) => b.step_status.step5 !== "draft" || b.step5_points);
@@ -25,8 +17,7 @@ export default function LearnHome() {
     (b) => b.step3_script && b.step4_companions && b.step5_points
   );
 
-  // Enrich each learner with conversation count + last message preview.
-  const enriched = learners.map((l) => {
+  const rows: LearnerRow[] = learners.map((l) => {
     const count = conversationCount(l.learner_id);
     const last = lastConversationEntry(l.learner_id);
     const bp = bps.find((b) => b.blueprint_id === l.blueprint_id);
@@ -35,7 +26,18 @@ export default function LearnHome() {
         ? last.text.slice(0, 70) + "…"
         : last.text
       : null;
-    return { learner: l, count, last, preview, topic: bp?.topic ?? l.blueprint_id };
+    return {
+      learner_id: l.learner_id,
+      topic: bp?.topic ?? l.blueprint_id,
+      count,
+      position_chapter: l.position.chapter_id,
+      position_challenge: l.position.challenge_id,
+      points_total: l.points.total,
+      preview,
+      last_role: last?.role ?? null,
+      last_who: last?.who ?? null,
+      last_ts: last?.ts ?? null,
+    };
   });
 
   return (
@@ -62,49 +64,9 @@ export default function LearnHome() {
 
       <section className="card">
         <h2 className="font-semibold mb-3">
-          已有学员 / Existing learners <span className="text-muted text-xs font-normal">（共 {enriched.length} 位）</span>
+          已有学员 / Existing learners <span className="text-muted text-xs font-normal">（共 {rows.length} 位）</span>
         </h2>
-        {enriched.length === 0 ? (
-          <p className="text-sm text-muted">还没有 learner。开一个看看？</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {enriched.map(({ learner: l, count, last, preview, topic }) => (
-              <li key={l.learner_id}>
-                <Link
-                  href={`/learn/${l.learner_id}`}
-                  className="card-sub flex flex-col gap-1 hover:border-accent"
-                  data-test-id={`learner-link-${l.learner_id}`}
-                >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold">{topic}</span>
-                    <span className="text-muted text-xs font-mono">{l.learner_id}</span>
-                    <span className="chip">{count} 条对话</span>
-                    <span className="ml-auto text-xs text-muted">
-                      {l.position.chapter_id} / {l.position.challenge_id} · {l.points.total} 分
-                    </span>
-                  </div>
-                  {last ? (
-                    <div className="text-xs text-muted">
-                      <span className="chip">
-                        {last.role === "learner"
-                          ? "学员"
-                          : last.role === "narrator"
-                          ? "Narrator"
-                          : last.role === "companion"
-                          ? last.who ?? "伴学"
-                          : last.who ?? "系统"}
-                      </span>{" "}
-                      <span className="text-text">{preview}</span>
-                      <span className="ml-2 text-muted/70">· {relativeTime(last.ts)}</span>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted">尚无对话</div>
-                  )}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <LearnerList learners={rows} />
       </section>
     </div>
   );

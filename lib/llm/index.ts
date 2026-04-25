@@ -48,7 +48,13 @@ export async function llmCall(args: LlmCallArgs): Promise<LlmCallResult> {
 
   // 3) 调用 LLM（mock 或 real）。默认走最强的 Opus；per-caller 可在 prompt body 里
   //    覆盖（例如 haiku 用于高频低延迟的 Companion / summary / recap）。
-  const useMock = !process.env.ANTHROPIC_API_KEY || process.env.LLM_MOCK === "1";
+  const explicitMock = process.env.LLM_MOCK === "1";
+  if (!process.env.ANTHROPIC_API_KEY && !explicitMock) {
+    throw new LlmConfigurationError(
+      "ANTHROPIC_API_KEY is required. Set LLM_MOCK=1 only for explicit local/test mock mode."
+    );
+  }
+  const useMock = explicitMock;
   const model = args.modelOverride ?? prompt.model ?? "claude-opus-4-7";
 
   // One-time stderr warning per process so users never silently eat mock data.
@@ -272,6 +278,15 @@ export class LlmTruncatedError extends Error {
     this.model = args.model;
     this.maxTokens = args.maxTokens;
     this.outputTokens = args.outputTokens;
+  }
+}
+
+export class LlmConfigurationError extends Error {
+  readonly code = "llm_configuration_error" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "LlmConfigurationError";
   }
 }
 

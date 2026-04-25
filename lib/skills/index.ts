@@ -10,7 +10,11 @@ import {
 } from "@/lib/blueprint";
 import { computeUnlockThresholds, DEFAULT_FRAMEWORK } from "@/lib/points";
 import { normalizeChallengeArtifacts } from "@/lib/skills/artifacts-normalizer";
-import { llmCallWithTransientRetry } from "@/lib/llm/retry";
+import {
+  LlmInvalidOutputError,
+  llmCallWithTransientRetry,
+  llmCallWithValidationRetry,
+} from "@/lib/llm/retry";
 import { normalizeChallengeResponseFrames } from "@/lib/learning-runtime/response-frames";
 export { normalizeChallengeArtifacts, normalizeArtifact, normalizeContent } from "@/lib/skills/artifacts-normalizer";
 import type {
@@ -83,19 +87,23 @@ export async function runSkill3Skeleton(
   }
   const step1 = bp.step1_gamecore;
   const step2 = bp.step2_experience;
-  const res = await llmCallWithTransientRetry(() =>
-    llmCall({
-      caller: "skill_3_script_skeleton",
-      stage: "design",
-      blueprintId,
-      variables: {
-        topic: bp.topic,
-        core_actions: step1.core_actions,
-        experience_mapping: step2.mappings,
-      },
+  const { result: res, skeleton } = await llmCallWithValidationRetry(
+    () =>
+      llmCall({
+        caller: "skill_3_script_skeleton",
+        stage: "design",
+        blueprintId,
+        variables: {
+          topic: bp.topic,
+          core_actions: step1.core_actions,
+          experience_mapping: step2.mappings,
+        },
+      }),
+    (result) => ({
+      result,
+      skeleton: normalizeSkill3Skeleton(result.parsed),
     })
   );
-  const skeleton = normalizeSkill3Skeleton(res.parsed);
   return { blueprint: bp, callId: res.callId, traceId: res.traceId, skeleton };
 }
 
@@ -105,10 +113,25 @@ function normalizeSkill3Skeleton(parsed: unknown): unknown {
     chapters?: unknown;
   };
   if (!Array.isArray(skeleton.chapters) || skeleton.chapters.length === 0) {
-    throw new Error("skill_3 skeleton invalid: missing chapters");
+    throw new LlmInvalidOutputError("skill_3 skeleton invalid: missing chapters");
   }
   return skeleton;
 }
+
+type Skill3SkeletonChapter = {
+  chapter_id: string;
+  title: string;
+  milestone_summary?: string;
+  arc_stage_id?: string;
+  challenges: Array<{
+    challenge_id: string;
+    title: string;
+    binds_actions: string[];
+    complexity: "low" | "medium" | "high";
+    response_frames?: unknown;
+    default_response_frame_id?: string;
+  }>;
+};
 
 export async function runSkill3Fill(
   blueprintId: string,
@@ -119,18 +142,7 @@ export async function runSkill3Fill(
 
   type SkeletonShape = {
     journey_meta?: Step3Script["journey_meta"];
-    chapters?: Array<{
-      chapter_id: string;
-      title: string;
-      milestone_summary?: string;
-      arc_stage_id?: string;
-      challenges: Array<{
-        challenge_id: string;
-        title: string;
-        binds_actions: string[];
-        complexity: "low" | "medium" | "high";
-      }>;
-    }>;
+    chapters?: Skill3SkeletonChapter[];
   };
   const sk = (skeleton ?? {}) as SkeletonShape;
   const chapters = sk.chapters ?? [];
@@ -160,130 +172,28 @@ export async function runSkill3Fill(
     const currentArcStage = chap.arc_stage_id
       ? arcStageById.get(chap.arc_stage_id) ?? null
       : null;
-    const res = await llmCallWithTransientRetry(() =>
-      llmCall({
-        caller: "skill_3_script_fill",
-        stage: "design",
-        blueprintId,
-        variables: {
-          skeleton: {
-            journey_meta: journeyMeta,
-            chapter: chap,
-            current_arc_stage: currentArcStage,
+    const { result: res, chapter: filledChapter } = await llmCallWithValidationRetry(
+      () =>
+        llmCall({
+          caller: "skill_3_script_fill",
+          stage: "design",
+          blueprintId,
+          variables: {
+            skeleton: {
+              journey_meta: journeyMeta,
+              chapter: chap,
+              current_arc_stage: currentArcStage,
+            },
           },
-        },
+        }),
+      (result) => ({
+        result,
+        chapter: normalizeSkill3FilledChapter(result.parsed, chap),
       })
     );
     lastCallId = res.callId;
     lastTraceId = res.traceId;
-    const parsed = (res.parsed ?? {}) as { chapters?: unknown; chapter?: unknown };
-    const one = ((parsed.chapters as Step3Script["chapters"] | undefined)?.[0] ??
-      (parsed.chapter as Step3Script["chapters"][number] | undefined)) as
-      | Step3Script["chapters"][number]
-      | undefined;
-    if (!one || !Array.isArray(one.challenges)) {
-      throw new Error(`skill_3 fill invalid for chapter ${chap.chapter_id}`);
-    }
-    // Strict validation (PRIOR BUG: silent `?? one.challenges[0]` fallback
-    // duplicated the first challenge into every missing slot when Claude's
-    // output was truncated — see bp_3a8c1c9b c2_ch4/c3_ch3/c3_ch4/c4_ch3).
-    // Every skeleton challenge_id MUST be present in Claude's output, every
-    // filled challenge MUST have a non-trivial setup, and no two challenges
-    // in the same chapter may share their title/setup prefix.
-    const byId = new Map<string, Step3Script["chapters"][number]["challenges"][number]>();
-    for (const c of one.challenges) {
-      if (c && typeof c.challenge_id === "string") byId.set(c.challenge_id, c);
-    }
-    const missing = chap.challenges
-      .map((s) => s.challenge_id)
-      .filter((id) => !byId.has(id));
-    if (missing.length > 0) {
-      throw new Error(
-        `skill_3 fill missing challenges for chapter ${chap.chapter_id}: ` +
-          `[${missing.join(", ")}]. Claude returned ` +
-          `[${Array.from(byId.keys()).join(", ")}] — output may have been truncated. ` +
-          `Bump max_tokens on skill_3_script_fill.`
-      );
-    }
-    const seenTitle = new Map<string, string>();
-    const seenSetup = new Map<string, string>();
-    const thinSetup: string[] = [];
-    for (const skCh of chap.challenges) {
-      const filled = byId.get(skCh.challenge_id)!;
-      const titleKey = String(filled.title ?? "").trim().slice(0, 30);
-      const setupKey = String(filled.trunk?.setup ?? "").trim().slice(0, 30);
-      const setupLen = String(filled.trunk?.setup ?? "").trim().length;
-      if (setupLen < 30) thinSetup.push(`${skCh.challenge_id}(setup=${setupLen}字)`);
-      if (titleKey) {
-        const prev = seenTitle.get(titleKey);
-        if (prev) {
-          throw new Error(
-            `skill_3 fill duplicate title in chapter ${chap.chapter_id}: ` +
-              `${prev} and ${skCh.challenge_id} both start with 「${titleKey}」. ` +
-              `Output may have been truncated or Claude copied a challenge.`
-          );
-        }
-        seenTitle.set(titleKey, skCh.challenge_id);
-      }
-      if (setupKey) {
-        const prev = seenSetup.get(setupKey);
-        if (prev) {
-          throw new Error(
-            `skill_3 fill duplicate setup in chapter ${chap.chapter_id}: ` +
-              `${prev} and ${skCh.challenge_id} share the same opening 30 chars 「${setupKey}」. ` +
-              `Output may have been truncated or Claude copied a challenge.`
-          );
-        }
-        seenSetup.set(setupKey, skCh.challenge_id);
-      }
-    }
-    if (thinSetup.length > 0) {
-      throw new Error(
-        `skill_3 fill thin setup in chapter ${chap.chapter_id}: ` +
-          `${thinSetup.join(", ")} (need ≥ 30 chars). Output may have been truncated.`
-      );
-    }
-
-    // Normalise: keep skeleton ids stable
-    filledChapters.push({
-      chapter_id: chap.chapter_id,
-      title: one.title ?? chap.title,
-      narrative_premise: one.narrative_premise ?? "",
-      milestone: one.milestone ?? {
-        id: `m_${chap.chapter_id}`,
-        summary: chap.milestone_summary ?? "",
-      },
-      arc_stage_id: chap.arc_stage_id,
-      challenges: chap.challenges.map((skCh) => {
-        const filled = byId.get(skCh.challenge_id)!;
-        const trunk = filled.trunk ?? {
-          setup: "",
-          action_prompts: [],
-          expected_signals: [],
-        };
-        // Defensive: ensure action_prompts and expected_signals are arrays.
-        const base = {
-          challenge_id: skCh.challenge_id,
-          title: filled.title ?? skCh.title,
-          binds_actions: skCh.binds_actions,
-          complexity: skCh.complexity,
-          trunk: {
-            setup: String(trunk.setup ?? ""),
-            action_prompts: Array.isArray(trunk.action_prompts) ? trunk.action_prompts : [],
-            expected_signals: Array.isArray(trunk.expected_signals) ? trunk.expected_signals : [],
-          },
-          companion_hooks: normalizeCompanionHooks(filled.companion_hooks, skCh.challenge_id),
-          artifacts: (filled as unknown as { artifacts?: unknown }).artifacts,
-          response_frames: (filled as unknown as { response_frames?: unknown }).response_frames,
-          default_response_frame_id:
-            (filled as unknown as { default_response_frame_id?: string }).default_response_frame_id ??
-            (skCh as unknown as { default_response_frame_id?: string }).default_response_frame_id,
-        };
-        return normalizeChallengeResponseFrames(
-          normalizeChallengeArtifacts(base as import("@/lib/types/core").Challenge)
-        );
-      }),
-    });
+    filledChapters.push(filledChapter);
     persistSkill3Progress(bp, journeyMeta, filledChapters);
   }
 
@@ -292,6 +202,115 @@ export async function runSkill3Fill(
   persistSkill3Progress(bp, journeyMeta, filledChapters);
   auditStep(blueprintId, 3, bp.version, bp.step3_script);
   return { blueprint: bp, callId: lastCallId, traceId: lastTraceId };
+}
+
+function normalizeSkill3FilledChapter(
+  parsed: unknown,
+  chap: Skill3SkeletonChapter
+): Step3Script["chapters"][number] {
+  const parsedObj = (parsed ?? {}) as { chapters?: unknown; chapter?: unknown };
+  const one = ((parsedObj.chapters as Step3Script["chapters"] | undefined)?.[0] ??
+    (parsedObj.chapter as Step3Script["chapters"][number] | undefined)) as
+    | Step3Script["chapters"][number]
+    | undefined;
+  if (!one || !Array.isArray(one.challenges)) {
+    throw new LlmInvalidOutputError(`skill_3 fill invalid JSON/schema for chapter ${chap.chapter_id}`);
+  }
+
+  // Strict validation (PRIOR BUG: silent `?? one.challenges[0]` fallback
+  // duplicated the first challenge into every missing slot when Claude's
+  // output was truncated). Every skeleton challenge_id MUST be present in
+  // Claude's output, every filled challenge MUST have a non-trivial setup, and
+  // no two challenges in the same chapter may share their title/setup prefix.
+  const byId = new Map<string, Step3Script["chapters"][number]["challenges"][number]>();
+  for (const c of one.challenges) {
+    if (c && typeof c.challenge_id === "string") byId.set(c.challenge_id, c);
+  }
+  const missing = chap.challenges
+    .map((s) => s.challenge_id)
+    .filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    throw new LlmInvalidOutputError(
+      `skill_3 fill missing challenges for chapter ${chap.chapter_id}: ` +
+        `[${missing.join(", ")}]. Claude returned ` +
+        `[${Array.from(byId.keys()).join(", ")}]. Output may have been truncated or malformed.`
+    );
+  }
+  const seenTitle = new Map<string, string>();
+  const seenSetup = new Map<string, string>();
+  const thinSetup: string[] = [];
+  for (const skCh of chap.challenges) {
+    const filled = byId.get(skCh.challenge_id)!;
+    const titleKey = String(filled.title ?? "").trim().slice(0, 30);
+    const setupKey = String(filled.trunk?.setup ?? "").trim().slice(0, 30);
+    const setupLen = String(filled.trunk?.setup ?? "").trim().length;
+    if (setupLen < 30) thinSetup.push(`${skCh.challenge_id}(setup=${setupLen}字)`);
+    if (titleKey) {
+      const prev = seenTitle.get(titleKey);
+      if (prev) {
+        throw new LlmInvalidOutputError(
+          `skill_3 fill duplicate title in chapter ${chap.chapter_id}: ` +
+            `${prev} and ${skCh.challenge_id} both start with 「${titleKey}」.`
+        );
+      }
+      seenTitle.set(titleKey, skCh.challenge_id);
+    }
+    if (setupKey) {
+      const prev = seenSetup.get(setupKey);
+      if (prev) {
+        throw new LlmInvalidOutputError(
+          `skill_3 fill duplicate setup in chapter ${chap.chapter_id}: ` +
+            `${prev} and ${skCh.challenge_id} share the same opening 30 chars 「${setupKey}」.`
+        );
+      }
+      seenSetup.set(setupKey, skCh.challenge_id);
+    }
+  }
+  if (thinSetup.length > 0) {
+    throw new LlmInvalidOutputError(
+      `skill_3 fill thin setup in chapter ${chap.chapter_id}: ` +
+        `${thinSetup.join(", ")} (need >= 30 chars).`
+    );
+  }
+
+  return {
+    chapter_id: chap.chapter_id,
+    title: one.title ?? chap.title,
+    narrative_premise: one.narrative_premise ?? "",
+    milestone: one.milestone ?? {
+      id: `m_${chap.chapter_id}`,
+      summary: chap.milestone_summary ?? "",
+    },
+    arc_stage_id: chap.arc_stage_id,
+    challenges: chap.challenges.map((skCh) => {
+      const filled = byId.get(skCh.challenge_id)!;
+      const trunk = filled.trunk ?? {
+        setup: "",
+        action_prompts: [],
+        expected_signals: [],
+      };
+      const base = {
+        challenge_id: skCh.challenge_id,
+        title: filled.title ?? skCh.title,
+        binds_actions: skCh.binds_actions,
+        complexity: skCh.complexity,
+        trunk: {
+          setup: String(trunk.setup ?? ""),
+          action_prompts: Array.isArray(trunk.action_prompts) ? trunk.action_prompts : [],
+          expected_signals: Array.isArray(trunk.expected_signals) ? trunk.expected_signals : [],
+        },
+        companion_hooks: normalizeCompanionHooks(filled.companion_hooks, skCh.challenge_id),
+        artifacts: (filled as unknown as { artifacts?: unknown }).artifacts,
+        response_frames: (filled as unknown as { response_frames?: unknown }).response_frames,
+        default_response_frame_id:
+          (filled as unknown as { default_response_frame_id?: string }).default_response_frame_id ??
+          skCh.default_response_frame_id,
+      };
+      return normalizeChallengeResponseFrames(
+        normalizeChallengeArtifacts(base as import("@/lib/types/core").Challenge)
+      );
+    }),
+  };
 }
 
 function persistSkill3Progress(

@@ -571,7 +571,9 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "  · list — 清单 / 检查表（title? + mode: checklist|bullet|numbered + items:[{text,checked?,status?}]）\n" +
         "  · table — 二维表格 / 对比矩阵（title? + columns:[{key,label}] + rows:[{...}]）\n" +
         "  · hierarchy — 组织架构 / 大纲 / 分类树（title? + root:{label,children?}）\n" +
-        "- type 与 content 必须严格对应。内容要真实且具体（不要用'示例数据'这种占位词）。\n" +
+        "- type 与 content 必须严格对应。content 必须是对象，不能是字符串，不能写成 `\"content\":\"title\":...` 这种破坏 JSON 的结构。\n" +
+        "- list 的 content 必须写成 `{ \"title\": \"...\", \"mode\": \"bullet\", \"items\": [{ \"text\": \"...\" }] }`。fields / series / table / hierarchy 同理，content 内部字段必须放在对象里。\n" +
+        "- 内容要真实且具体（不要用'示例数据'这种占位词）。\n" +
         "- trigger 可选：on_challenge_enter（开场即掉） / on_learner_request（学员询问后掉） / on_judge_scaffold（Judge 诊断卡壳时掉）。\n" +
         "- trigger_hint：当 trigger 不是 on_challenge_enter 时必填。一句话告诉 Judge 哪类询问会触发这个 artifact，例：'学员询问小陈是谁 / 小陈的背景 / 谁是小陈'。\n" +
         "- artifact_id 在整个 blueprint 内唯一；name 要简短精准（'小陈的周报草稿'、'团队出勤表 W27'）。\n" +

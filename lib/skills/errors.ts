@@ -1,5 +1,8 @@
-import { isTransientUpstreamError } from "@/lib/llm/retry";
+import {
+  isInvalidUpstreamOutputError,
+  isTransientUpstreamError,
+} from "@/lib/llm/retry";
 
 export function designSkillErrorStatus(error: unknown): number {
-  return isTransientUpstreamError(error) ? 502 : 400;
+  return isTransientUpstreamError(error) || isInvalidUpstreamOutputError(error) ? 502 : 400;
 }

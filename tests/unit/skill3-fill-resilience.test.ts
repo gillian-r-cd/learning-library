@@ -14,6 +14,7 @@ beforeAll(() => {
 const failOnce = new Set<string>();
 const returnErrorOnce = new Set<string>();
 const failAlways = new Set<string>();
+const invalidParsedOnce = new Set<string>();
 const callCountByChapter = new Map<string, number>();
 
 vi.mock("@/lib/llm", async () => {
@@ -78,6 +79,17 @@ vi.mock("@/lib/llm", async () => {
           latencyMs: 1,
         };
       }
+      if (invalidParsedOnce.has(chap.chapter_id) && nextCount === 1) {
+        return {
+          callId: `call_${chap.chapter_id}_${nextCount}`,
+          traceId: `trc_${chap.chapter_id}_${nextCount}`,
+          output: { text: "{\"chapters\":[{\"chapter_id\":\"broken\"" },
+          parsed: undefined,
+          text: "{\"chapters\":[{\"chapter_id\":\"broken\"",
+          tokens: { input: 0, output: 0, cache_creation: 0, cache_read: 0, total: 0 },
+          latencyMs: 1,
+        };
+      }
 
       const challenges = chap.challenges.map((ch) => ({
         challenge_id: ch.challenge_id,
@@ -120,6 +132,7 @@ beforeEach(() => {
   failOnce.clear();
   returnErrorOnce.clear();
   failAlways.clear();
+  invalidParsedOnce.clear();
   callCountByChapter.clear();
 });
 
@@ -158,6 +171,20 @@ describe("runSkill3Fill resilience", () => {
     const bp = createBlueprint("Skill3 returned error retry", "d_skill3_return_error");
     const skeleton = makeSkeleton();
     returnErrorOnce.add("c2");
+
+    await expect(runSkill3Fill(bp.blueprint_id, skeleton)).resolves.toBeTruthy();
+
+    expect(callCountByChapter.get("c2")).toBe(2);
+    const saved = getBlueprint(bp.blueprint_id);
+    expect(saved?.step3_script?.chapters.map((c) => c.chapter_id)).toEqual(["c1", "c2"]);
+  });
+
+  it("retries invalid JSON or empty parsed output instead of accepting fallback data", async () => {
+    const { createBlueprint, getBlueprint } = await import("@/lib/blueprint");
+    const { runSkill3Fill } = await import("@/lib/skills");
+    const bp = createBlueprint("Skill3 invalid JSON retry", "d_skill3_invalid_json");
+    const skeleton = makeSkeleton();
+    invalidParsedOnce.add("c2");
 
     await expect(runSkill3Fill(bp.blueprint_id, skeleton)).resolves.toBeTruthy();
 

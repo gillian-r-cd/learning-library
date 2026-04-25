@@ -9,6 +9,7 @@ import {
   appendConversation,
   latestConversationEntries,
   writeImmersiveOpening,
+  saveLearnerState,
 } from "@/lib/state-manager";
 import { runJudge, DEFAULT_ACTION_SPACE_RULES } from "@/lib/judge";
 import { runNarrator } from "@/lib/narrator";
@@ -31,8 +32,16 @@ import type {
   ArtifactDropMeta,
   ArtifactType,
   ConversationEntry,
+  HelpRequest,
   JudgeOutput,
+  LearnerStructuredResponse,
+  ResponseFrame,
 } from "@/lib/types/core";
+import {
+  buildLearnerStructuredResponse,
+  validateStructuredResponse,
+  type StructuredResponseInput,
+} from "@/lib/learning-runtime/response-frames";
 
 export interface DroppedArtifactSummary {
   artifact_id: string;
@@ -45,6 +54,7 @@ export interface DroppedArtifactSummary {
 export interface TurnResult {
   traceId: string;
   learnerInput: string;
+  structuredResponse?: LearnerStructuredResponse | null;
   narratorText: string;
   companionSpeeches: CompanionSpeech[];
   judgeOutput: JudgeOutput;
@@ -62,11 +72,14 @@ export interface TurnResult {
   } | null;
   /** Artifacts dropped during this turn (Judge event + cross-challenge enter). */
   droppedArtifacts: DroppedArtifactSummary[];
+  helpRequest?: { kind: HelpRequest["kind"]; pointsSpent: number } | null;
 }
 
 export async function runTurn(args: {
   learnerId: string;
-  input: string;
+  input?: string;
+  response?: StructuredResponseInput;
+  helpRequest?: HelpRequest;
   /** Optional recent turns for Narrator context. If omitted, pulled from the
    * persisted conversation_log so callers don't have to reconstruct it. */
   recentTurns?: { role: "learner" | "narrator" | "companion"; text: string }[];
@@ -76,6 +89,19 @@ export async function runTurn(args: {
   // 1. Build snapshot (State Manager read)
   const snapshot = buildSnapshot(args.learnerId);
   const preTurnPosition = { ...snapshot.learner.position };
+  const structuredResponse = args.response
+    ? buildValidatedStructuredResponse(snapshot.active_response_frame, args.response)
+    : null;
+  const helpRequestMeta = args.helpRequest
+    ? {
+        kind: args.helpRequest.kind,
+        pointsSpent: helpRequestCost(args.helpRequest.kind),
+      }
+    : null;
+  const learnerInput =
+    structuredResponse?.canonical_text ??
+    args.input ??
+    (args.helpRequest ? helpRequestInput(args.helpRequest.kind) : "");
 
   // 2. Evidence summary (simple: latest 3 evidence joined)
   const evidence = listEvidence(args.learnerId, 3);
@@ -89,8 +115,22 @@ export async function runTurn(args: {
     chapter_id: preTurnPosition.chapter_id,
     challenge_id: preTurnPosition.challenge_id,
     role: "learner",
-    text: args.input,
+    text: learnerInput,
     trace_id: traceId,
+    meta: structuredResponse
+      ? {
+          kind: "learner_response",
+          response_frame: {
+            frame_id: structuredResponse.frame_id,
+            frame_version: structuredResponse.frame_version,
+            kind: structuredResponse.kind,
+          },
+          structured_response: {
+            values: structuredResponse.values,
+            canonical_text: structuredResponse.canonical_text,
+          },
+        }
+      : null,
   });
 
   // 3. Judge — now also carries the current challenge's companion_hooks
@@ -106,11 +146,12 @@ export async function runTurn(args: {
     : [];
   const judgeRes = await runJudge({
     snapshot,
-    learnerInput: args.input,
+    learnerInput,
     evidenceSummary,
     actionSpaceRules: DEFAULT_ACTION_SPACE_RULES,
     traceId,
     activeCompanionHooks,
+    helpRequest: args.helpRequest ?? null,
   });
 
   // 4. Apply Judge → State Manager update (every access defensively chained).
@@ -133,11 +174,15 @@ export async function runTurn(args: {
   // per-strategy rebound-rate metric (admin panel).
   const pathType = judgeRes.output.path_decision.type;
   const scaffoldStrategyThisTurn =
-    (pathType === "scaffold" || pathType === "simplify_challenge")
+    (pathType === "scaffold" ||
+    pathType === "simplify_challenge" ||
+    pathType === "reveal_answer_and_advance")
       ? judgeRes.output.path_decision.scaffold_spec?.strategy ?? null
       : null;
   const scaffoldAssistedThisTurn =
-    pathType === "scaffold" || pathType === "simplify_challenge";
+    pathType === "scaffold" ||
+    pathType === "simplify_challenge" ||
+    pathType === "reveal_answer_and_advance";
   // Quotable aggregate: if any quality entry has quotable=true, flag the row.
   const quotableThisTurn = (judgeRes.output.quality ?? []).some(
     (q) => q?.quotable === true
@@ -155,6 +200,41 @@ export async function runTurn(args: {
     quotable: quotableThisTurn,
   });
 
+  if (helpRequestMeta && helpRequestMeta.pointsSpent > 0) {
+    const before = applied.state.points.total;
+    applied.state.points.total = Math.max(0, Math.round((before - helpRequestMeta.pointsSpent) * 10) / 10);
+    saveLearnerState(applied.state);
+    appendConversation({
+      learner_id: args.learnerId,
+      turn_idx: preTurnPosition.turn_idx,
+      chapter_id: preTurnPosition.chapter_id,
+      challenge_id: preTurnPosition.challenge_id,
+      role: "system",
+      who: "help",
+      text: `使用求助：${helpRequestLabel(helpRequestMeta.kind)} · -${Math.min(before, helpRequestMeta.pointsSpent)} 点`,
+      trace_id: traceId,
+      meta: {
+        kind: "help_spent",
+        help_kind: helpRequestMeta.kind,
+        points_spent: helpRequestMeta.pointsSpent,
+        total_points: applied.state.points.total,
+      },
+    });
+  }
+
+  const nextFrameSelection = judgeRes.output.next_response_frame;
+  if (
+    nextFrameSelection &&
+    !applied.advancedToNewChallenge &&
+    snapshot.response_frames.some((frame) => frame.frame_id === nextFrameSelection.frame_id)
+  ) {
+    applied.state.active_response_frame = {
+      challenge_id: applied.state.position.challenge_id,
+      selection: nextFrameSelection,
+    };
+    saveLearnerState(applied.state);
+  }
+
   // 5a. Process AWARD_SIGNATURE_MOVE events (subjective ability tracking).
   //     Must happen before Narrator so if the move produced a system bubble,
   //     it appears above the Narrator turn response.
@@ -170,7 +250,7 @@ export async function runTurn(args: {
         learner: stateForMove,
         bp: bpForMoves,
         moveId,
-        triggeringQuote: args.input,
+        triggeringQuote: learnerInput,
         challengeId: preTurnPosition.challenge_id,
         turnIdx: preTurnPosition.turn_idx,
         chapterId: preTurnPosition.chapter_id,
@@ -257,7 +337,7 @@ export async function runTurn(args: {
     runNarrator({
       snapshot,
       judgeOutput: judgeRes.output,
-      learnerInput: args.input,
+      learnerInput,
       recentTurns,
       newlyDroppedArtifacts: newlyDroppedBriefs,
       sceneJournal,
@@ -294,6 +374,25 @@ export async function runTurn(args: {
         }
       : null,
   });
+  if (applied.pointsEarned > 0) {
+    appendConversation({
+      learner_id: args.learnerId,
+      turn_idx: preTurnPosition.turn_idx,
+      chapter_id: preTurnPosition.chapter_id,
+      challenge_id: preTurnPosition.challenge_id,
+      role: "system",
+      who: "points",
+      text: `+${applied.pointsEarned} 分 · 累计 ${applied.state.points.total} 分`,
+      trace_id: traceId,
+      meta: {
+        kind: "points_awarded",
+        points_earned: applied.pointsEarned,
+        total_points: applied.state.points.total,
+        effective_total_before_refresh: snapshot.effective_total,
+        primary_reason: firstJudgeEvidence(judgeRes.output),
+      },
+    });
+  }
   for (const c of companionSpeeches) {
     appendConversation({
       learner_id: args.learnerId,
@@ -419,7 +518,8 @@ export async function runTurn(args: {
 
   return {
     traceId,
-    learnerInput: args.input,
+    learnerInput,
+    structuredResponse,
     narratorText: narrator.text,
     companionSpeeches,
     judgeOutput: judgeRes.output,
@@ -430,7 +530,26 @@ export async function runTurn(args: {
     position: applied.state.position,
     openingOfNewChallenge: applied.advancedToNewChallenge,
     droppedArtifacts: droppedThisTurn,
+    helpRequest: helpRequestMeta,
   };
+}
+
+function helpRequestCost(kind: HelpRequest["kind"]): number {
+  if (kind === "hint") return 1;
+  if (kind === "example") return 2;
+  return 4;
+}
+
+function helpRequestLabel(kind: HelpRequest["kind"]): string {
+  if (kind === "hint") return "给一点提示";
+  if (kind === "example") return "看一个范例";
+  return "揭晓并继续";
+}
+
+function helpRequestInput(kind: HelpRequest["kind"]): string {
+  if (kind === "hint") return "我想花 1 点换一个提示。";
+  if (kind === "example") return "我想花 2 点看一个范例。";
+  return "我想花 4 点揭晓答案并继续。";
 }
 
 function conversationEntryToDropSummary(entry: ConversationEntry): DroppedArtifactSummary {
@@ -446,6 +565,21 @@ function conversationEntryToDropSummary(entry: ConversationEntry): DroppedArtifa
     type: (m.type as ArtifactType) ?? "narrative",
     conversation_id: entry.id,
   };
+}
+
+function buildValidatedStructuredResponse(
+  frame: ResponseFrame,
+  response: StructuredResponseInput
+): LearnerStructuredResponse {
+  const validation = validateStructuredResponse(frame, response);
+  if (!validation.ok) {
+    throw new Error(`structured response invalid: ${validation.errors.join("; ")}`);
+  }
+  return buildLearnerStructuredResponse(frame, response);
+}
+
+function firstJudgeEvidence(output: JudgeOutput): string {
+  return output.quality.find((q) => q.evidence?.trim())?.evidence ?? "你完成了一次有效练习。";
 }
 
 /** Keep only the tail of `entries` that belongs to the current challenge.

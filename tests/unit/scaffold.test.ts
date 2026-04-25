@@ -138,6 +138,29 @@ describe("detectSelfHelpSignal — precise self-help utterances only", () => {
   });
 });
 
+describe("detectHelpIntent — frustration and paid help levels", () => {
+  it("classifies hint, example, and reveal help requests", async () => {
+    const { detectHelpIntent } = await import(
+      "@/lib/learning-runtime/scaffold"
+    );
+
+    expect(detectHelpIntent("提示一下")).toMatchObject({ kind: "hint" });
+    expect(detectHelpIntent("给我个例子")).toMatchObject({ kind: "example" });
+    expect(detectHelpIntent("直接告诉我答案吧")).toMatchObject({ kind: "reveal" });
+  });
+
+  it("treats strong frustration as reveal intent", async () => {
+    const { detectHelpIntent } = await import(
+      "@/lib/learning-runtime/scaffold"
+    );
+
+    expect(detectHelpIntent("算了我不想答了，一直不对")).toMatchObject({
+      kind: "reveal",
+      frustration: true,
+    });
+  });
+});
+
 describe("runTurn — scaffold_strategy is persisted to evidence_log", () => {
   it("a 'poor' turn produces scaffold evidence row whose scaffold_strategy is set", async () => {
     const { createBlueprint } = await import("@/lib/blueprint");
@@ -204,6 +227,45 @@ describe("runTurn — scaffold_strategy is persisted to evidence_log", () => {
       "worked_example"
     );
     const ev = listEvidence(learner.learner_id, 3);
+    expect(ev[0].scaffold_strategy).toBe("worked_example");
+    expect(ev[0].scaffold_assisted).toBe(true);
+  });
+
+  it("paid reveal help gives an answer and advances to the next challenge", async () => {
+    const { createBlueprint } = await import("@/lib/blueprint");
+    const {
+      runSkill1,
+      runSkill2,
+      runSkill3Fill,
+      runSkill3Skeleton,
+      runSkill4,
+      runSkill5,
+    } = await import("@/lib/skills");
+    const { createLearnerState, listEvidence } = await import(
+      "@/lib/state-manager"
+    );
+    const { runTurn } = await import("@/lib/learning-runtime");
+
+    const bp = createBlueprint("揭晓并继续主题", "d_reveal");
+    await runSkill1(bp.blueprint_id);
+    await runSkill2(bp.blueprint_id);
+    const sk = await runSkill3Skeleton(bp.blueprint_id);
+    await runSkill3Fill(bp.blueprint_id, sk.skeleton);
+    await runSkill4(bp.blueprint_id);
+    await runSkill5(bp.blueprint_id);
+
+    const learner = await createLearnerState(bp.blueprint_id);
+    const before = learner.position.challenge_id;
+    const result = await runTurn({
+      learnerId: learner.learner_id,
+      helpRequest: { kind: "reveal" },
+    });
+
+    expect(result.judgeOutput.path_decision.type).toBe("reveal_answer_and_advance");
+    expect(result.position.challenge_id).not.toBe(before);
+    expect(result.helpRequest?.kind).toBe("reveal");
+    expect(result.helpRequest?.pointsSpent).toBe(4);
+    const ev = listEvidence(learner.learner_id, 1);
     expect(ev[0].scaffold_strategy).toBe("worked_example");
     expect(ev[0].scaffold_assisted).toBe(true);
   });

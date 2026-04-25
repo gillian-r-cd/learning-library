@@ -85,6 +85,94 @@ export interface CompanionHook {
   };
 }
 
+// ===== Learner response frames =====
+// Fixed, Schema-driven input contracts for learner replies. The learner UI
+// renders these with known components; LLMs choose ids, not UI code.
+
+export type ResponseFrameKind =
+  | "free_text"
+  | "single_choice"
+  | "multi_choice"
+  | "form"
+  | "ranking"
+  | "matrix"
+  | "allocation"
+  | "compound";
+
+export type ResponseFieldType =
+  | "text"
+  | "textarea"
+  | "number"
+  | "select"
+  | "radio"
+  | "checkboxes"
+  | "chips"
+  | "rank_order"
+  | "likert"
+  | "matrix_cell";
+
+export interface ResponseOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface ResponseField {
+  field_id: string;
+  type: ResponseFieldType;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  help_text?: string;
+  options?: ResponseOption[];
+  validation?: {
+    min_length?: number;
+    max_length?: number;
+    min_items?: number;
+    max_items?: number;
+  };
+  maps_to?: {
+    action_id?: string;
+    dim_id?: string;
+    evidence_key?: string;
+  };
+}
+
+export interface ResponseFrame {
+  frame_id: string;
+  version: number;
+  kind: ResponseFrameKind;
+  title: string;
+  prompt: string;
+  helper_text?: string;
+  submit_label?: string;
+  binds_actions: string[];
+  expected_evidence_keys?: string[];
+  fields: ResponseField[];
+  validation?: {
+    min_required_fields?: number;
+  };
+  fallback_frame_id?: string;
+}
+
+export interface LearnerStructuredResponse {
+  frame_id: string;
+  frame_version: number;
+  kind: ResponseFrameKind;
+  values: Record<string, unknown>;
+  canonical_text: string;
+}
+
+export interface NextResponseFrameSelection {
+  frame_id: string;
+  reason: string;
+  overrides?: {
+    title?: string;
+    prompt?: string;
+    helper_text?: string;
+  };
+}
+
 export interface Challenge {
   challenge_id: string;
   title: string;
@@ -98,6 +186,9 @@ export interface Challenge {
   companion_hooks: CompanionHook[];
   /** 挑战级道具数组（0-3 个）。老 blueprint 没有此字段时 UI 自然降级。 */
   artifacts?: Artifact[];
+  /** Schema-driven learner reply frames; normalised to include free_text. */
+  response_frames?: ResponseFrame[];
+  default_response_frame_id?: string;
 }
 
 // ===== Artifacts (道具) =====
@@ -424,6 +515,10 @@ export interface LearnerState {
   };
   unlocked_companions: { companion_id: string; level: number; unlocked_at: string }[];
   completed_challenges: string[];
+  active_response_frame?: {
+    challenge_id: string;
+    selection: NextResponseFrameSelection;
+  } | null;
   /** Every signature_move the learner has earned at least once. */
   earned_signature_moves?: EarnedSignatureMove[];
   last_active_at: string;
@@ -489,6 +584,7 @@ export type PathDecisionType =
   | "scaffold"
   | "branch"
   | "complete_challenge"
+  | "reveal_answer_and_advance"
   | "escalate_complexity"
   /** Continuous failure (≥5 all-poor turns OR explicit self-help signal).
    *  Runtime switches to a combined worked_example + contrastive_cases
@@ -567,6 +663,13 @@ export interface JudgeOutput {
   }[];
   script_branch_switch?: string | null;
   event_triggers: { type: string; payload?: Record<string, unknown> }[];
+  next_response_frame?: NextResponseFrameSelection | null;
+}
+
+export type HelpRequestKind = "hint" | "example" | "reveal";
+
+export interface HelpRequest {
+  kind: HelpRequestKind;
 }
 
 // ===== Ledger (PRD §8.2.1) =====

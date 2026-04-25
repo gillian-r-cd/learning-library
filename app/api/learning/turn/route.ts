@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runTurn } from "@/lib/learning-runtime";
+import type { HelpRequest } from "@/lib/types/core";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { learner_id, input, recent_turns } = body ?? {};
-  if (!learner_id || typeof input !== "string") {
-    return NextResponse.json({ error: "learner_id + input required" }, { status: 400 });
+  const { learner_id, input, response, help_request, recent_turns } = body ?? {};
+  const helpRequest = normalizeHelpRequest(help_request);
+  if (!learner_id || (typeof input !== "string" && !response && !helpRequest)) {
+    return NextResponse.json({ error: "learner_id + input, response, or help_request required" }, { status: 400 });
   }
   try {
-    const result = await runTurn({ learnerId: learner_id, input, recentTurns: recent_turns });
+    const result = await runTurn({
+      learnerId: learner_id,
+      input,
+      response,
+      helpRequest,
+      recentTurns: recent_turns,
+    });
     return NextResponse.json(result);
   } catch (e) {
     const err = e as Error;
@@ -28,4 +36,11 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function normalizeHelpRequest(raw: unknown): HelpRequest | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const kind = (raw as { kind?: unknown }).kind;
+  if (kind === "hint" || kind === "example" || kind === "reveal") return { kind };
+  return undefined;
 }

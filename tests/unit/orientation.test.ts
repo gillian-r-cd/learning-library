@@ -43,6 +43,7 @@ describe("immersive opening — learner arrives in one narrator bubble", () => {
     // The immersive opening must be a substantive second-person paragraph,
     // not a boilerplate course-description. Length ≥ 30 chars is a generous floor.
     expect(openings[0].text.length).toBeGreaterThanOrEqual(30);
+    expect(openings[0].text).toMatch(/你(现在)?是|你的身份|作为|实践者|leader|负责人|主管/);
 
     // It must NOT start with the legacy 【xxx】 title-label prefix, and must not
     // contain any of the banned meta-preamble phrases.

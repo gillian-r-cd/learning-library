@@ -72,7 +72,7 @@ export async function runNarratorOpening(
   const bp = getBlueprint(args.blueprintId);
   if (!bp) {
     return {
-      text: fallbackOpening(null, null, null, args.variant),
+      text: fallbackOpening(null, null, null, args.variant, "", ""),
       callId: "fallback_no_blueprint",
       traceId: args.traceId,
     };
@@ -130,6 +130,7 @@ export async function runNarratorOpening(
       protagonist_role:
         bp.step3_script?.journey_meta?.protagonist_role ??
         `你是一名正在学习「${bp.topic ?? ""}」的实践者`,
+      journey_goal: bp.step3_script?.journey_meta?.journey_goal ?? "",
       current_arc_stage: currentArcStage
         ? {
             name: currentArcStage.name,
@@ -168,6 +169,9 @@ export async function runNarratorOpening(
     variant: args.variant,
     artifactNames: pendingBriefs.map((b) => b.name),
     nameableCharacters: (journal?.nameable_characters ?? charactersPreview).map((c) => c.name),
+    protagonistRole:
+      bp.step3_script?.journey_meta?.protagonist_role ??
+      `你是一名正在学习「${bp.topic ?? ""}」的实践者`,
     // All character names DECLARED in this blueprint — any name in text that's
     // blueprint-declared but NOT in the whitelist is an off-narrative reference.
     declaredCharacters: collectAllDeclaredCharacterNames(bp),
@@ -177,7 +181,14 @@ export async function runNarratorOpening(
   }
   console.warn("[runNarratorOpening] validation failed, falling back", validated.issues);
   return {
-    text: fallbackOpening(chapter ?? null, challenge ?? null, pendingBriefs, args.variant),
+    text: fallbackOpening(
+      chapter ?? null,
+      challenge ?? null,
+      pendingBriefs,
+      args.variant,
+      bp.step3_script?.journey_meta?.protagonist_role ?? "",
+      bp.step3_script?.journey_meta?.journey_goal ?? ""
+    ),
     callId: res.callId,
     traceId: res.traceId,
   };
@@ -211,18 +222,22 @@ function validateOpeningOutput(
     variant: "first" | "cross_challenge";
     artifactNames: string[];
     nameableCharacters: string[];
+    protagonistRole: string;
     declaredCharacters: string[];
   }
 ): { ok: boolean; issues: string[] } {
   const issues: string[] = [];
   if (!text || text.length < 40) issues.push("too-short");
-  if (text.length > 260) issues.push("too-long");
+  if (text.length > 340) issues.push("too-long");
   if (/\{\{|\bundefined\b|\bnull\b/.test(text)) issues.push("placeholder-leak");
   if (/^【|【第\s*\d+\s*章】|【第一幕】|欢迎来到/.test(text)) issues.push("meta-preamble");
   if (/"学员"|\b您\b|\b用户\b/.test(text)) issues.push("third-person-leak");
   if (/👉|```/.test(text)) issues.push("forbidden-symbol");
   // Must end with a question for "first" variant (open call-to-action)
   if (ctx.variant === "first" && !/[？?]\s*$/.test(text)) issues.push("no-closing-question");
+  if (ctx.variant === "first" && !openingContainsLearnerIdentity(text, ctx.protagonistRole)) {
+    issues.push("missing-learner-identity");
+  }
   // If there are artifacts expected to drop, text should reference at least one by name substring
   if (ctx.artifactNames.length > 0) {
     const anyHit = ctx.artifactNames.some((n) => n && text.includes(n));
@@ -247,7 +262,9 @@ function fallbackOpening(
   chapter: { title?: string; narrative_premise?: string } | null,
   challenge: { title?: string; trunk?: { setup?: string; action_prompts?: string[] } } | null,
   pendingArtifacts: Array<{ name: string }> | null,
-  variant: "first" | "cross_challenge"
+  variant: "first" | "cross_challenge",
+  protagonistRole: string,
+  journeyGoal: string
 ): string {
   const title = challenge?.title ?? chapter?.title ?? "此刻";
   const setup = challenge?.trunk?.setup?.trim() ?? "";
@@ -260,8 +277,34 @@ function fallbackOpening(
     variant === "cross_challenge"
       ? "你把上一幕收在这里，转入下一个场景。"
       : "";
-  const body = `${prefix}${setup} ${artifactHint}`.replace(/\s+/g, " ").trim();
+  const roleLine = protagonistRole
+    ? `${normalizeSecondPersonRole(protagonistRole)}。`
+    : "";
+  const goalLine = journeyGoal ? `这一段要完成的是：${journeyGoal}。` : "";
+  const body = `${prefix}${roleLine}${goalLine}${setup} ${artifactHint}`.replace(/\s+/g, " ").trim();
   return (body || title) + ` ${prompt}`;
+}
+
+function openingContainsLearnerIdentity(text: string, protagonistRole: string): boolean {
+  if (/你(现在)?是|你的身份|作为/.test(text)) return true;
+  const keywords = roleKeywords(protagonistRole);
+  return keywords.some((word) => text.includes(word));
+}
+
+function roleKeywords(protagonistRole: string): string[] {
+  const words = protagonistRole.match(/[A-Za-z][A-Za-z -]{2,}|[一-龥]{2,}/g) ?? [];
+  const stop = new Set(["你是", "一名", "正在", "学习", "实践者", "需要", "面对", "这个", "一个"]);
+  return words
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 2 && !stop.has(word))
+    .slice(0, 8);
+}
+
+function normalizeSecondPersonRole(protagonistRole: string): string {
+  const trimmed = protagonistRole.trim();
+  if (!trimmed) return "";
+  if (/^你(现在)?是/.test(trimmed)) return trimmed.replace(/[。.!！\s]+$/, "");
+  return `你现在是${trimmed.replace(/^一名/, "一名").replace(/[。.!！\s]+$/, "")}`;
 }
 
 // ============================================================================

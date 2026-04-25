@@ -18,6 +18,14 @@
 import { db } from "@/lib/db";
 import type { Grade } from "@/lib/types/core";
 
+export type HelpIntentKind = "none" | "hint" | "example" | "reveal";
+
+export interface HelpIntent {
+  kind: HelpIntentKind;
+  selfHelp: boolean;
+  frustration: boolean;
+}
+
 /** Walk back through evidence rows within `challengeId`, newest first, and
  *  count the suffix of consecutive turns where EVERY graded dim is "poor".
  *  Any single "medium" or "good" breaks the streak. */
@@ -76,4 +84,49 @@ export function detectSelfHelpSignal(learnerInput: string): boolean {
     return true;
   }
   return false;
+}
+
+export function detectHelpIntent(learnerInput: string): HelpIntent {
+  if (!learnerInput) return { kind: "none", selfHelp: false, frustration: false };
+  const trimmed = learnerInput.trim();
+  const selfHelp = detectSelfHelpSignal(trimmed);
+  const hint = /(提示一下|给点线索|给我点线索|提醒我一下|一点提示|线索就行)/.test(trimmed);
+  const reveal =
+    /(直接告诉我(答案|怎么做)|告诉我答案|给答案|揭晓吧|看答案|我放弃|算了|不想答了|不想继续|别问了|跳过吧|一直不对|老是不对|太烦了|烦死了)/.test(
+      trimmed
+    );
+  const frustration =
+    reveal ||
+    /(崩溃|挫败|受不了了|怎么都不对|一直卡|卡死了|太难了|好烦|没意思)/.test(
+      trimmed
+    );
+
+  if (reveal || frustration) return { kind: "reveal", selfHelp, frustration };
+  if (selfHelp) return { kind: "example", selfHelp, frustration: false };
+  if (hint) return { kind: "hint", selfHelp: false, frustration: false };
+  return { kind: "none", selfHelp: false, frustration: false };
+}
+
+/** Count the latest learner messages in the same challenge that are help or
+ * frustration signals. Called after the current learner message is persisted,
+ * so a value of 2 means the learner has now asked twice in a row. */
+export function consecutiveHelpSignalsInChallenge(
+  learnerId: string,
+  challengeId: string
+): number {
+  const rows = db()
+    .prepare(
+      `SELECT text FROM conversation_log
+       WHERE learner_id = ? AND challenge_id = ? AND role = 'learner'
+       ORDER BY id DESC
+       LIMIT 5`
+    )
+    .all(learnerId, challengeId) as Array<{ text: string }>;
+  let streak = 0;
+  for (const row of rows) {
+    const intent = detectHelpIntent(row.text);
+    if (intent.kind === "none") break;
+    streak += 1;
+  }
+  return streak;
 }

@@ -10,6 +10,8 @@ import {
 } from "@/lib/blueprint";
 import { computeUnlockThresholds, DEFAULT_FRAMEWORK } from "@/lib/points";
 import { normalizeChallengeArtifacts } from "@/lib/skills/artifacts-normalizer";
+import { llmCallWithTransientRetry } from "@/lib/llm/retry";
+import { normalizeChallengeResponseFrames } from "@/lib/learning-runtime/response-frames";
 export { normalizeChallengeArtifacts, normalizeArtifact, normalizeContent } from "@/lib/skills/artifacts-normalizer";
 import type {
   Blueprint,
@@ -79,17 +81,33 @@ export async function runSkill3Skeleton(
   if (!bp.step1_gamecore || !bp.step2_experience) {
     throw new Error("step1 or step2 not ready");
   }
-  const res = await llmCall({
-    caller: "skill_3_script_skeleton",
-    stage: "design",
-    blueprintId,
-    variables: {
-      topic: bp.topic,
-      core_actions: bp.step1_gamecore.core_actions,
-      experience_mapping: bp.step2_experience.mappings,
-    },
-  });
-  return { blueprint: bp, callId: res.callId, traceId: res.traceId, skeleton: res.parsed };
+  const step1 = bp.step1_gamecore;
+  const step2 = bp.step2_experience;
+  const res = await llmCallWithTransientRetry(() =>
+    llmCall({
+      caller: "skill_3_script_skeleton",
+      stage: "design",
+      blueprintId,
+      variables: {
+        topic: bp.topic,
+        core_actions: step1.core_actions,
+        experience_mapping: step2.mappings,
+      },
+    })
+  );
+  const skeleton = normalizeSkill3Skeleton(res.parsed);
+  return { blueprint: bp, callId: res.callId, traceId: res.traceId, skeleton };
+}
+
+function normalizeSkill3Skeleton(parsed: unknown): unknown {
+  const skeleton = (parsed ?? {}) as {
+    journey_meta?: unknown;
+    chapters?: unknown;
+  };
+  if (!Array.isArray(skeleton.chapters) || skeleton.chapters.length === 0) {
+    throw new Error("skill_3 skeleton invalid: missing chapters");
+  }
+  return skeleton;
 }
 
 export async function runSkill3Fill(
@@ -127,25 +145,35 @@ export async function runSkill3Fill(
   for (const s of journeyMeta.arc_stages ?? []) arcStageById.set(s.id, s);
 
   // Fill chapter-by-chapter to keep each LLM call within max_tokens.
+  const existingById = new Map(
+    (bp.step3_script?.chapters ?? []).map((chapter) => [chapter.chapter_id, chapter])
+  );
   const filledChapters: Step3Script["chapters"] = [];
   let lastCallId = "";
   let lastTraceId = "";
   for (const chap of chapters) {
+    const existing = existingById.get(chap.chapter_id);
+    if (existing && chapterCoversSkeleton(existing, chap)) {
+      filledChapters.push(existing);
+      continue;
+    }
     const currentArcStage = chap.arc_stage_id
       ? arcStageById.get(chap.arc_stage_id) ?? null
       : null;
-    const res = await llmCall({
-      caller: "skill_3_script_fill",
-      stage: "design",
-      blueprintId,
-      variables: {
-        skeleton: {
-          journey_meta: journeyMeta,
-          chapter: chap,
-          current_arc_stage: currentArcStage,
+    const res = await llmCallWithTransientRetry(() =>
+      llmCall({
+        caller: "skill_3_script_fill",
+        stage: "design",
+        blueprintId,
+        variables: {
+          skeleton: {
+            journey_meta: journeyMeta,
+            chapter: chap,
+            current_arc_stage: currentArcStage,
+          },
         },
-      },
-    });
+      })
+    );
     lastCallId = res.callId;
     lastTraceId = res.traceId;
     const parsed = (res.parsed ?? {}) as { chapters?: unknown; chapter?: unknown };
@@ -246,19 +274,44 @@ export async function runSkill3Fill(
           },
           companion_hooks: normalizeCompanionHooks(filled.companion_hooks, skCh.challenge_id),
           artifacts: (filled as unknown as { artifacts?: unknown }).artifacts,
+          response_frames: (filled as unknown as { response_frames?: unknown }).response_frames,
+          default_response_frame_id:
+            (filled as unknown as { default_response_frame_id?: string }).default_response_frame_id ??
+            (skCh as unknown as { default_response_frame_id?: string }).default_response_frame_id,
         };
-        return normalizeChallengeArtifacts(base as import("@/lib/types/core").Challenge);
+        return normalizeChallengeResponseFrames(
+          normalizeChallengeArtifacts(base as import("@/lib/types/core").Challenge)
+        );
       }),
     });
+    persistSkill3Progress(bp, journeyMeta, filledChapters);
   }
 
   if (filledChapters.length === 0) throw new Error("skill_3 fill invalid: empty skeleton");
 
-  bp.step3_script = { journey_meta: journeyMeta, chapters: filledChapters };
-  bp.step_status.step3 = "draft";
-  updateBlueprint(bp);
+  persistSkill3Progress(bp, journeyMeta, filledChapters);
   auditStep(blueprintId, 3, bp.version, bp.step3_script);
   return { blueprint: bp, callId: lastCallId, traceId: lastTraceId };
+}
+
+function persistSkill3Progress(
+  bp: Blueprint,
+  journeyMeta: Step3Script["journey_meta"],
+  chapters: Step3Script["chapters"]
+) {
+  bp.step3_script = { journey_meta: journeyMeta, chapters };
+  bp.step_status.step3 = "draft";
+  updateBlueprint(bp);
+}
+
+function chapterCoversSkeleton(
+  existing: Step3Script["chapters"][number],
+  skeletonChapter: {
+    challenges: Array<{ challenge_id: string }>;
+  }
+): boolean {
+  const existingIds = new Set(existing.challenges.map((challenge) => challenge.challenge_id));
+  return skeletonChapter.challenges.every((challenge) => existingIds.has(challenge.challenge_id));
 }
 
 // -------- Skill 4 --------

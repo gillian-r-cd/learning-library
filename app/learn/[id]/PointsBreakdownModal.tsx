@@ -29,20 +29,19 @@ export default function PointsBreakdownModal({ breakdown, onClose }: Props) {
   const { entries, totals } = breakdown;
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="points-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel rounded-xl border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-panel/95 rounded-2xl border border-warn/30 max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-          <span className="text-2xl">🪙</span>
           <div className="flex-1">
-            <div className="font-semibold">点数明细 / Points breakdown</div>
+            <div className="font-semibold">点数明细</div>
             <div className="text-xs text-muted">
-              每一次加分背后的具体理由都在这里。点数 =（每维度得分之和）× 挑战复杂度倍率。
+              每一次加分背后的具体理由都在这里。点数 = 每维度得分之和 × 挑战复杂度倍率。
             </div>
           </div>
           <button className="btn text-xs" onClick={onClose} data-test-id="points-modal-close">
@@ -51,11 +50,11 @@ export default function PointsBreakdownModal({ breakdown, onClose }: Props) {
         </div>
         <div className="px-4 py-3 border-b border-border grid grid-cols-3 gap-3 text-sm">
           <div className="card-sub">
-            <div className="label">累计原始 / Raw total</div>
+            <div className="label">累计原始</div>
             <div className="text-accent text-lg" data-test-id="points-raw-total">{totals.raw}</div>
           </div>
           <div className="card-sub">
-            <div className="label">有效 / Effective (with decay)</div>
+            <div className="label">有效稳固值</div>
             <div className="text-good text-lg">{totals.effective}</div>
           </div>
           <div className="card-sub">
@@ -102,7 +101,7 @@ export default function PointsBreakdownModal({ breakdown, onClose }: Props) {
                       title={`本轮 Narrator 走了「${e.scaffold_strategy}」认知支架策略`}
                       data-test-id={`scaffold-chip-${e.scaffold_strategy}`}
                     >
-                      🧱 支架 · {STRATEGY_CHIP[e.scaffold_strategy] ?? e.scaffold_strategy}
+                      支架 · {STRATEGY_CHIP[e.scaffold_strategy] ?? e.scaffold_strategy}
                     </span>
                   )}
                   <span className="text-accent font-semibold ml-auto">
@@ -127,7 +126,7 @@ export default function PointsBreakdownModal({ breakdown, onClose }: Props) {
                 )}
                 {e.evidence && (
                   <div className="text-xs text-muted mt-1 whitespace-pre-wrap">
-                    Judge 评语：{e.evidence}
+                    评语：{e.evidence}
                   </div>
                 )}
               </div>

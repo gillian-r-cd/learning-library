@@ -461,6 +461,7 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
   // Runtime-derived scaffold signals.
   const consecutivePoor = Number(variables.consecutive_poor_in_challenge ?? 0);
   const selfHelp = Boolean(variables.self_help_signal);
+  const helpIntent = String(variables.help_intent ?? "none");
 
   // Decision priorities:
   //   (1) Self-help signal OR consecutive_poor ≥ 5 → simplify_challenge
@@ -476,6 +477,7 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
     | "retry"
     | "scaffold"
     | "complete_challenge"
+    | "reveal_answer_and_advance"
     | "simplify_challenge" = "advance";
   let scaffoldStrategy:
     | "worked_example"
@@ -488,7 +490,10 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
     | "self_explanation"
     | null = null;
 
-  if (selfHelp || consecutivePoor >= 5) {
+  if (helpIntent === "reveal") {
+    decisionType = "reveal_answer_and_advance";
+    scaffoldStrategy = "worked_example";
+  } else if (selfHelp || consecutivePoor >= 5) {
     decisionType = "simplify_challenge";
     scaffoldStrategy = "worked_example";
   } else if (consecutivePoor >= 3) {
@@ -543,7 +548,9 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
         : null,
     },
     narrator_directive:
-      grade === "good"
+      decisionType === "reveal_answer_and_advance"
+        ? "直接给出参考答案和判断依据，明确告诉学员本题到此收束，并承接到下一挑战。"
+        : grade === "good"
         ? "肯定其信息采集与推理的深度，并引入更高复杂度的后续情境。"
         : grade === "medium"
         ? "肯定他注意到的线索，追问他忽略的那一层。"
@@ -777,6 +784,7 @@ function mockNarratorOpening(variables: Record<string, unknown>): MockResult {
     | "first"
     | "cross_challenge";
   const role = (variables.protagonist_role as string) ?? "你正走入这个场景";
+  const journeyGoal = ((variables.journey_goal as string) ?? "").trim();
   const chapterTitle = (variables.chapter_title as string) ?? "";
   const challengeTitle = (variables.challenge_title as string) ?? "";
   const setup = ((variables.challenge_setup as string) ?? "").trim();
@@ -795,6 +803,7 @@ function mockNarratorOpening(variables: Record<string, unknown>): MockResult {
 
   // 5-part structure sentences. Mock produces one sentence per element so
   // the output deterministically contains each anchor.
+  const roleAnchor = normalizeMockRole(role);
   const stageAnchor = arcStage
     ? arcStage.name === "觉察"
       ? "空气里有一种还没动的静。"
@@ -814,7 +823,9 @@ function mockNarratorOpening(variables: Record<string, unknown>): MockResult {
   const timePlace = variant === "cross_challenge" && prevTitle
     ? `你把《${prevTitle}》的结论合上，转向下一场。`
     : "下午两点十分，会议室的灯亮着。";
-  const stakes = "再拖，这一段今天就过不去。";
+  const stakes = journeyGoal
+    ? `这一段要练到的是：${journeyGoal.slice(0, 42)}。`
+    : "再拖，这一段今天就过不去。";
 
   const personIntro = characters[0]
     ? `${characters[0].name}（${characters[0].identity}）已经在座，你走进去。`
@@ -835,10 +846,17 @@ function mockNarratorOpening(variables: Record<string, unknown>): MockResult {
     ? arcStage.signature_question
     : "此刻你第一件要观察的是什么？";
 
-  let text = `${stageAnchor}${timePlace}${stakes}${situation}${closingQuestion}`;
+  let text = `${roleAnchor}${stageAnchor}${timePlace}${stakes}${situation}${closingQuestion}`;
   // Guard: strip any stray 【...】 or 👉 residue.
   text = text.replace(/【[^】]*】/g, "").replace(/👉/g, "").replace(/\s+/g, " ").trim();
   return { output: { text }, text, promptTokens: 700, outputTokens: 140, cacheRead: 560 };
+}
+
+function normalizeMockRole(role: string): string {
+  const clean = role.trim().replace(/[。.!！\s]+$/, "");
+  if (!clean) return "你现在是这段任务的实践者。";
+  if (/^你(现在)?是/.test(clean)) return `${clean}。`;
+  return `你现在是${clean}。`;
 }
 
 function escapeReg(s: string): string {

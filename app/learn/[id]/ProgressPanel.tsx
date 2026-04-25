@@ -7,8 +7,8 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
 
   if (!progress) {
     return (
-      <div className="card">
-        <div className="label">旅程进度 / Journey progress</div>
+      <div className="stage-card">
+        <div className="label">旅程进度</div>
         <p className="text-xs text-muted mt-1">
           蓝图尚未生成剧本，进度将在剧本就绪后显示。
         </p>
@@ -21,11 +21,9 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
   );
 
   return (
-    <div className="card" data-test-id="progress-panel">
+    <div className="stage-card" data-test-id="progress-panel">
       <div className="flex items-center justify-between">
-        <div className="label">
-          旅程进度 <span className="text-muted/70">Journey progress</span>
-        </div>
+        <div className="label">章节路线</div>
         <div className="text-xs text-muted">
           {progress.completion_ratio}{" "}
           <span className="text-muted/70">({percent}%)</span>
@@ -33,7 +31,7 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
       </div>
 
       {/* overall bar */}
-      <div className="mt-2 h-1.5 rounded bg-panel2 overflow-hidden">
+      <div className="mt-2 h-2 rounded-full bg-panel2 overflow-hidden">
         <div
           className="h-full bg-accent transition-all"
           style={{ width: `${percent}%` }}
@@ -65,7 +63,7 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
                   setCollapsed((s) => ({ ...s, [chap.chapter_id]: !isCollapsed }))
                 }
               >
-                <span className="text-muted/70">第 {chap.chapter_index} 章</span>
+                  <span className="text-muted/70">第 {chap.chapter_index} 章</span>
                 <span
                   className={
                     chap.chapter_status === "current"
@@ -85,13 +83,13 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
                   }`}
                 >
                   {chap.chapter_status === "completed"
-                    ? "✓ 已完成"
+                    ? "已完成"
                     : chap.chapter_status === "current"
-                    ? "⏵ 进行中"
+                    ? "进行中"
                     : "待解锁"}
                 </span>
                 <span className="ml-auto text-muted/60 text-[10px]">
-                  {isCollapsed ? "▸" : "▾"}
+                  {isCollapsed ? "展开" : "收起"}
                 </span>
               </button>
               {chap.milestone_summary && (
@@ -114,12 +112,12 @@ export default function ProgressPanel({ progress }: { progress: JourneyProgress 
                       data-test-id={`progress-ch-${ch.challenge_id}`}
                       data-challenge-status={ch.status}
                     >
-                      <span className="w-4 shrink-0">
+                      <span className="w-8 shrink-0 text-[10px]">
                         {ch.status === "completed"
-                          ? "✓"
+                          ? "完成"
                           : ch.status === "current"
-                          ? "▶"
-                          : "○"}
+                          ? "当前"
+                          : "待启"}
                       </span>
                       <span className="truncate">{ch.title}</span>
                       <span className="chip text-[9px]">{ch.complexity}</span>

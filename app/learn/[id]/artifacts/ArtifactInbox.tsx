@@ -15,16 +15,15 @@ export default function ArtifactInbox({ groups, onClose }: Props) {
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/50"
+        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
         data-test-id="artifact-inbox-backdrop"
         onClick={onClose}
       />
       <aside
-        className="fixed right-0 top-0 bottom-0 w-[400px] max-w-full z-50 bg-panel border-l border-border flex flex-col"
+        className="fixed right-0 top-0 bottom-0 w-[400px] max-w-full z-50 bg-panel/95 border-l border-accent/30 flex flex-col shadow-2xl"
         data-test-id="artifact-inbox"
       >
         <div className="border-b border-border px-4 py-3 flex items-center gap-2">
-          <span className="text-xl">🎒</span>
           <span className="font-semibold">道具箱</span>
           <span className="chip">{groups.length} 件</span>
           <button className="btn text-xs ml-auto" onClick={onClose} data-test-id="artifact-inbox-close">

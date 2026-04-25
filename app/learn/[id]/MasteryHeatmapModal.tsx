@@ -25,9 +25,9 @@ function trend(recent: string[]): string {
   const rankOf = (g: string) => (g === "good" ? 2 : g === "medium" ? 1 : 0);
   const newest = rankOf(recent[0]);
   const prev = rankOf(recent[1]);
-  if (newest > prev) return "↗";
-  if (newest < prev) return "↘";
-  return "→";
+  if (newest > prev) return "上升";
+  if (newest < prev) return "回落";
+  return "稳定";
 }
 
 export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
@@ -35,20 +35,19 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
       data-test-id="mastery-heatmap-modal"
       onClick={onClose}
     >
       <div
-        className="bg-panel rounded-xl border border-border max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-panel/95 rounded-2xl border border-good/30 max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-          <span className="text-2xl">🎯</span>
           <div className="flex-1">
-            <div className="font-semibold">能力地图 / Mastery heatmap</div>
+            <div className="font-semibold">能力地图</div>
             <div className="text-xs text-muted">
-              这张图是旅程**客观**的能力覆盖——每个动作 × 每档难度都有一格，把它填满就是掌握了这个主题。招式集在隔壁（⚔️），那边是你**主观**的招式收藏。
+              每个动作 × 每档难度都有一格。把格子点亮，就是把这个主题练成自己的能力。
             </div>
           </div>
           <button className="btn text-xs" onClick={onClose} data-test-id="mastery-heatmap-close">
@@ -64,7 +63,7 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
             <span className="text-muted"> / {heatmap.total_cells} 格已精通</span>
           </span>
           <span className="ml-auto text-xs text-muted">
-            legend: 🟢 精通 · 🟡 摸到 · 🔴 初试 · ⚪ 未触及
+            精通 · 摸到 · 初试 · 未触及
           </span>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -74,7 +73,7 @@ export default function MasteryHeatmapModal({ heatmap, onClose }: Props) {
             <table className="text-xs w-full" data-test-id="mastery-heatmap-table">
               <thead>
                 <tr className="text-muted">
-                  <th className="text-left py-1 pr-3">动作 Action</th>
+                  <th className="text-left py-1 pr-3">动作</th>
                   {heatmap.complexities.map((c) => (
                     <th key={c} className="text-center py-1 px-2">
                       {c}

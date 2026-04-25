@@ -26,15 +26,14 @@ export default function ArtifactBubble({ meta, name, ts, versions }: Props) {
   return (
     <>
       <div
-        className="rounded-lg border border-accent/40 bg-accent/5 p-3 max-w-[92%] cursor-pointer hover:bg-accent/10 transition-colors"
+        className="moment-card border-accent/40 bg-accent/10 max-w-[92%] cursor-pointer hover:bg-accent/15 transition-colors"
         data-test-id="msg-artifact"
         data-artifact-id={meta.artifact_id}
         data-artifact-version={meta.version}
         onClick={() => setOpen(true)}
       >
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-lg">🎒</span>
-          <span className="font-semibold text-sm">{name}</span>
+          <span className="font-semibold text-sm">新道具 · {name}</span>
           <span className="chip">{meta.type}</span>
           {meta.version > 1 && <span className="chip chip-stale">v{meta.version}</span>}
           <span className="ml-auto text-[10px] text-muted">{tsLabel}</span>
@@ -43,7 +42,7 @@ export default function ArtifactBubble({ meta, name, ts, versions }: Props) {
           <ArtifactRenderer content={meta.content} />
           <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-accent/5 to-transparent pointer-events-none" />
         </div>
-        <div className="mt-2 text-[11px] text-accent">点击查看完整内容 →</div>
+        <div className="mt-2 text-[11px] text-accent">打开完整道具</div>
       </div>
       {open && (
         <ArtifactModal

@@ -9,6 +9,7 @@ import type {
   EvidenceEntry,
   Blueprint,
   CoreAction,
+  ResponseFrame,
 } from "@/lib/types/core";
 import { getBlueprint } from "@/lib/blueprint";
 import {
@@ -25,6 +26,10 @@ import {
 } from "@/lib/state-manager/conversation";
 import { dropChallengeEnterArtifacts } from "@/lib/learning-runtime/artifact-drop";
 import { runNarratorOpening } from "@/lib/narrator";
+import {
+  normalizeResponseFrames,
+  resolveActiveResponseFrame,
+} from "@/lib/learning-runtime/response-frames";
 
 export {
   appendConversation,
@@ -239,6 +244,8 @@ export interface Snapshot {
     binds_actions: string[];
   } | null;
   rubric_column: Record<string, Record<string, { good: string; medium: string; poor: string }>>;
+  response_frames: ResponseFrame[];
+  active_response_frame: ResponseFrame;
 }
 
 export function buildSnapshot(learnerId: string): Snapshot {
@@ -296,6 +303,18 @@ export function buildSnapshot(learnerId: string): Snapshot {
     }
   }
 
+  const responseFrameSource =
+    cl ?? {
+      binds_actions: currentChallenge?.binds_actions ?? [],
+      response_frames: undefined,
+      default_response_frame_id: undefined,
+    };
+  const normalizedFrames = normalizeResponseFrames(responseFrameSource);
+  const persistedSelection =
+    s.active_response_frame?.challenge_id === s.position.challenge_id
+      ? s.active_response_frame.selection
+      : null;
+
   return {
     learner: s,
     effective_total: Math.round(effTotal * 10) / 10,
@@ -303,6 +322,8 @@ export function buildSnapshot(learnerId: string): Snapshot {
     active_companions: s.unlocked_companions,
     current_challenge: currentChallenge,
     rubric_column,
+    response_frames: normalizedFrames.frames,
+    active_response_frame: resolveActiveResponseFrame(responseFrameSource, persistedSelection),
   };
 }
 
@@ -466,13 +487,15 @@ export function applyJudgeOutput(input: ApplyJudgeInput): {
   //
   // Semantics (aligned with PRD §6.3.2):
   //   - `advance`              → 当前挑战内前进（turn_idx++），**不**跳挑战
-  //   - `complete_challenge`   → 当前挑战完成，跳到下一个挑战（带过渡仪式）
+  //   - `complete_challenge` / `reveal_answer_and_advance`
+  //                            → 当前挑战完成，跳到下一个挑战（带过渡仪式）
   //   - `escalate_complexity`  → 当前挑战内提升难度（turn_idx++；实际复杂度切换留作后续）
   //   - `retry` / `scaffold` / `branch` → 当前挑战内继续（turn_idx++）
   const prevChallengeId = s.position.challenge_id;
   let advancedToNewChallenge: ReturnType<typeof applyJudgeOutput>["advancedToNewChallenge"] = null;
   const completedChallenge: ReturnType<typeof applyJudgeOutput>["completedChallenge"] =
-    input.decisionType === "complete_challenge"
+    input.decisionType === "complete_challenge" ||
+    input.decisionType === "reveal_answer_and_advance"
       ? (() => {
           const oldChap = bp.step3_script?.chapters.find((c) => c.chapter_id === s.position.chapter_id);
           const oldChal = oldChap?.challenges.find((c) => c.challenge_id === prevChallengeId);
@@ -488,7 +511,10 @@ export function applyJudgeOutput(input: ApplyJudgeInput): {
         })()
       : null;
 
-  if (input.decisionType === "complete_challenge") {
+  if (
+    input.decisionType === "complete_challenge" ||
+    input.decisionType === "reveal_answer_and_advance"
+  ) {
     advancePosition(s, bp);
     if (s.position.challenge_id !== prevChallengeId) {
       const newChap = bp.step3_script?.chapters.find((c) => c.chapter_id === s.position.chapter_id);

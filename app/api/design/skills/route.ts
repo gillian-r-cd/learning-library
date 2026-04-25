@@ -8,6 +8,8 @@ import {
   runSkill5,
   confirmStep,
 } from "@/lib/skills";
+import { getBlueprint } from "@/lib/blueprint";
+import { designSkillErrorStatus } from "@/lib/skills/errors";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -52,6 +54,12 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    const error = (e as Error).message;
+    const partialBlueprint =
+      action === "run_skill_3_fill" && blueprint_id ? getBlueprint(blueprint_id) : null;
+    return NextResponse.json(
+      { error, ...(partialBlueprint ? { blueprint: partialBlueprint } : {}) },
+      { status: designSkillErrorStatus(e) }
+    );
   }
 }

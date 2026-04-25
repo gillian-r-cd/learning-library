@@ -37,6 +37,8 @@ vi.mock("@/lib/llm", async () => {
           expected_signals: ["能给出判断依据"],
         },
         companion_hooks: [],
+        response_frames: (ch as { response_frames?: unknown }).response_frames,
+        default_response_frame_id: (ch as { default_response_frame_id?: string }).default_response_frame_id,
       }));
       return {
         callId: "call_mock",
@@ -88,5 +90,53 @@ describe("runSkill3Fill strict validation", () => {
     await expect(runSkill3Fill(bp.blueprint_id, skeleton)).rejects.toThrow(
       /missing challenges.*c1_ch2.*c1_ch3|missing challenges.*c1_ch3.*c1_ch2/
     );
+  });
+
+  it("normalizes response_frames and always adds free_text_default", async () => {
+    const { createBlueprint, getBlueprint } = await import("@/lib/blueprint");
+    const bp = createBlueprint("情境领导力 · response frames", "d_frames");
+
+    const { runSkill3Fill } = await import("@/lib/skills");
+    const skeleton = {
+      journey_meta: { arc_type: "hero_journey", tone: "cinematic_workplace", estimated_duration_min: 180 },
+      chapters: [
+        {
+          chapter_id: "c1",
+          title: "第一章",
+          milestone_summary: "",
+          challenges: [
+            {
+              challenge_id: "c1_ch1",
+              title: "ch1",
+              binds_actions: ["a1"],
+              complexity: "low",
+              default_response_frame_id: "rf_form",
+              response_frames: [
+                {
+                  frame_id: "rf_form",
+                  version: 1,
+                  kind: "form",
+                  title: "准备度诊断表",
+                  prompt: "拆开填写。",
+                  binds_actions: ["a1"],
+                  fields: [
+                    { field_id: "person", type: "text", label: "对象", required: true },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    await runSkill3Fill(bp.blueprint_id, skeleton);
+
+    const saved = getBlueprint(bp.blueprint_id);
+    const challenge = saved?.step3_script?.chapters[0]?.challenges[0];
+    expect(challenge?.default_response_frame_id).toBe("rf_form");
+    expect(challenge?.response_frames?.map((f) => f.frame_id)).toEqual([
+      "free_text_default",
+      "rf_form",
+    ]);
   });
 });

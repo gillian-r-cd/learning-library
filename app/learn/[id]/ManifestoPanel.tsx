@@ -11,23 +11,21 @@ export default function ManifestoPanel({
 
   if (segments.length === 0) {
     return (
-      <div className="card" data-test-id="manifesto-panel-empty">
+      <div className="stage-card" data-test-id="manifesto-panel-empty">
         <div className="flex items-center gap-2">
-          <span>📜</span>
-          <span className="label">我的宣言 / Manifesto</span>
+          <span className="label">我的宣言</span>
         </div>
         <div className="text-xs text-muted mt-1">
-          完成一整章后，这里会用**你自己的原话**合成一段本章宣言——由系统编织、由你署名。
+          完成一整章后，这里会用你自己的原话合成一段本章宣言，由你署名。
         </div>
       </div>
     );
   }
 
   return (
-    <div className="card" data-test-id="manifesto-panel">
+    <div className="stage-card" data-test-id="manifesto-panel">
       <div className="flex items-center gap-2">
-        <span>📜</span>
-        <span className="label">我的宣言 / Manifesto</span>
+        <span className="label">我的宣言</span>
         <span className="chip ml-auto">{segments.length} 章已完成</span>
       </div>
       <div className="mt-2 space-y-2">
@@ -48,7 +46,7 @@ export default function ManifestoPanel({
                     {seg.chapter_title ?? seg.chapter_id}
                   </span>
                   {seg.arc_stage_name && (
-                    <span className="chip">🧭 {seg.arc_stage_name}</span>
+                    <span className="chip">{seg.arc_stage_name}</span>
                   )}
                   <span className="ml-auto text-[10px] text-muted">
                     {isOpen ? "收起" : "展开"}

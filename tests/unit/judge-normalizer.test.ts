@@ -104,6 +104,44 @@ describe("normalizeJudgeOutput — tolerate LLM shape drift", () => {
     });
   });
 
+  it("preserves a valid next_response_frame selection", () => {
+    const out = normalizeJudgeOutput(
+      {
+        quality: [{ dim_id: "d1", grade: "poor", evidence: "x" }],
+        path_decision: { type: "scaffold" },
+        next_response_frame: {
+          frame_id: "rf_readiness_diagnosis",
+          reason: "学员混淆能力和意愿",
+          overrides: {
+            helper_text: "先拆开填写。",
+          },
+        },
+      },
+      { dimIds: ["d1"] }
+    );
+    expect(out.next_response_frame).toEqual({
+      frame_id: "rf_readiness_diagnosis",
+      reason: "学员混淆能力和意愿",
+      overrides: {
+        helper_text: "先拆开填写。",
+      },
+    });
+  });
+
+  it("drops malformed next_response_frame selections", () => {
+    const out = normalizeJudgeOutput(
+      {
+        quality: [{ dim_id: "d1", grade: "poor", evidence: "x" }],
+        next_response_frame: {
+          frame_id: "",
+          reason: 123,
+        },
+      },
+      { dimIds: ["d1"] }
+    );
+    expect(out.next_response_frame).toBeNull();
+  });
+
   it("normalises each quality entry with default dim_id fallbacks", () => {
     const out = normalizeJudgeOutput(
       {
@@ -177,6 +215,7 @@ describe("normalizeJudgeOutput — tolerate LLM shape drift", () => {
       ],
       script_branch_switch: null,
       event_triggers: [{ type: "AWARD_POINTS", payload: { grade: "good" } }],
+      next_response_frame: null,
     };
     const out = normalizeJudgeOutput(raw, { dimIds: ["d1"] });
     expect(out).toEqual(raw);

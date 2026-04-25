@@ -6,6 +6,7 @@
 
 import { randomUUID } from "node:crypto";
 import { llmCall } from "@/lib/llm";
+import { llmCallWithTransientRetry } from "@/lib/llm/retry";
 import { getBlueprint } from "@/lib/blueprint";
 import { db } from "@/lib/db";
 import { conversationCount } from "@/lib/state-manager/conversation";
@@ -17,14 +18,18 @@ import {
 import type { ActiveCompanionHook } from "@/lib/learning-runtime/companion-hooks";
 import type {
   Grade,
+  HelpRequest,
   JudgeOutput,
+  NextResponseFrameSelection,
   ScaffoldStrategy,
   ScaffoldSpec,
 } from "@/lib/types/core";
 import { SCAFFOLD_FORM_TO_STRATEGY } from "@/lib/types/core";
 import type { Snapshot } from "@/lib/state-manager";
 import {
+  consecutiveHelpSignalsInChallenge,
   consecutivePoorInChallenge,
+  detectHelpIntent,
   detectSelfHelpSignal,
 } from "@/lib/learning-runtime/scaffold";
 import { eligibleMovesForChallenge } from "@/lib/learning-runtime/signature-moves";
@@ -40,6 +45,7 @@ export interface JudgeInput {
    *  weakness, the companion whose hook it is MUST be a speaker. */
   activeCompanionHooks?: ActiveCompanionHook[];
   traceId?: string;
+  helpRequest?: HelpRequest | null;
 }
 
 export async function runJudge(args: JudgeInput): Promise<{
@@ -95,6 +101,18 @@ export async function runJudge(args: JudgeInput): Promise<{
       )
     : 0;
   const selfHelpSignal = detectSelfHelpSignal(args.learnerInput);
+  const detectedHelpIntent = detectHelpIntent(args.learnerInput);
+  const helpSignalStreak = currentChallengeId
+    ? consecutiveHelpSignalsInChallenge(
+        args.snapshot.learner.learner_id,
+        currentChallengeId
+      )
+    : 0;
+  const helpIntent =
+    args.helpRequest?.kind ??
+    (helpSignalStreak >= 2 && detectedHelpIntent.kind !== "none"
+      ? "reveal"
+      : detectedHelpIntent.kind);
 
   // Signature moves eligible for the current challenge (bound actions).
   // Judge is instructed to emit AWARD_SIGNATURE_MOVE events when learner's
@@ -116,45 +134,68 @@ export async function runJudge(args: JudgeInput): Promise<{
     ])
   );
 
-  const res = await llmCall({
-    caller: "judge",
-    stage: "learning",
-    traceId,
-    learnerId: args.snapshot.learner.learner_id,
-    blueprintId: args.snapshot.learner.blueprint_id,
-    userVisible: false,
-    variables: {
-      topic: bp?.topic ?? "(未知主题)",
-      protagonist_role:
-        bp?.step3_script?.journey_meta?.protagonist_role ??
-        `一名正在学习「${bp?.topic ?? ""}」的实践者`,
-      chapter_title: chapter?.title ?? "—",
-      chapter_narrative_premise: chapter?.narrative_premise ?? "",
-      challenge_title: challenge?.title ?? "—",
-      challenge_complexity: challenge?.complexity ?? "low",
-      challenge_setup: challenge?.trunk?.setup ?? "",
-      challenge_expected_signals: challenge?.trunk?.expected_signals ?? [],
-      core_action_description: boundAction
-        ? `${boundAction.name}: ${boundAction.description}`
-        : "—",
-      learner_total_turns: totalLearnerTurns,
-      challenge_turn_idx: args.snapshot.learner.position.turn_idx,
-      rubric_column: args.snapshot.rubric_column,
-      action_space_rules: args.actionSpaceRules,
-      learner_input: args.learnerInput,
-      evidence_summary: args.evidenceSummary,
-      events: args.snapshot.events,
-      active_companions: args.snapshot.active_companions,
-      available_artifacts: availableArtifacts,
-      pending_artifacts: pendingArtifacts,
-      per_dim_recent_grades: perDimRecentGrades,
-      active_companion_hooks: args.activeCompanionHooks ?? [],
-      consecutive_poor_in_challenge: consecutivePoor,
-      self_help_signal: selfHelpSignal,
-      eligible_signature_moves: eligibleSignatureMoves,
-      earned_signature_move_counts: earnedMoveCounts,
-    },
-  });
+  const res = await llmCallWithTransientRetry(() =>
+    llmCall({
+      caller: "judge",
+      stage: "learning",
+      traceId,
+      learnerId: args.snapshot.learner.learner_id,
+      blueprintId: args.snapshot.learner.blueprint_id,
+      userVisible: false,
+      variables: {
+        topic: bp?.topic ?? "(未知主题)",
+        protagonist_role:
+          bp?.step3_script?.journey_meta?.protagonist_role ??
+          `一名正在学习「${bp?.topic ?? ""}」的实践者`,
+        chapter_title: chapter?.title ?? "—",
+        chapter_narrative_premise: chapter?.narrative_premise ?? "",
+        challenge_title: challenge?.title ?? "—",
+        challenge_complexity: challenge?.complexity ?? "low",
+        challenge_setup: challenge?.trunk?.setup ?? "",
+        challenge_expected_signals: challenge?.trunk?.expected_signals ?? [],
+        core_action_description: boundAction
+          ? `${boundAction.name}: ${boundAction.description}`
+          : "—",
+        learner_total_turns: totalLearnerTurns,
+        challenge_turn_idx: args.snapshot.learner.position.turn_idx,
+        rubric_column: args.snapshot.rubric_column,
+        action_space_rules: args.actionSpaceRules,
+        learner_input: args.learnerInput,
+        evidence_summary: args.evidenceSummary,
+        events: args.snapshot.events,
+        active_companions: args.snapshot.active_companions,
+        response_frames: args.snapshot.response_frames.map((f) => ({
+          frame_id: f.frame_id,
+          kind: f.kind,
+          title: f.title,
+          prompt: f.prompt,
+          fields: f.fields.map((field) => ({
+            field_id: field.field_id,
+            type: field.type,
+            label: field.label,
+            required: field.required ?? false,
+          })),
+        })),
+        active_response_frame: {
+          frame_id: args.snapshot.active_response_frame.frame_id,
+          kind: args.snapshot.active_response_frame.kind,
+          title: args.snapshot.active_response_frame.title,
+        },
+        available_artifacts: availableArtifacts,
+        pending_artifacts: pendingArtifacts,
+        per_dim_recent_grades: perDimRecentGrades,
+        active_companion_hooks: args.activeCompanionHooks ?? [],
+        consecutive_poor_in_challenge: consecutivePoor,
+        self_help_signal: selfHelpSignal,
+        help_intent: helpIntent,
+        help_request_kind: args.helpRequest?.kind ?? "",
+        frustration_signal: detectedHelpIntent.frustration,
+        consecutive_help_signals_in_challenge: helpSignalStreak,
+        eligible_signature_moves: eligibleSignatureMoves,
+        earned_signature_move_counts: earnedMoveCounts,
+      },
+    })
+  );
   const normalized = normalizeJudgeOutput(res.parsed, {
     dimIds: extractDimIds(args.snapshot.rubric_column, boundActionId),
   });
@@ -211,13 +252,16 @@ export function normalizeJudgeOutput(
     "scaffold",
     "branch",
     "complete_challenge",
+    "reveal_answer_and_advance",
     "escalate_complexity",
     "simplify_challenge",
   ];
   const pathType = (validTypes.includes(pdType) ? pdType : "retry") as
     JudgeOutput["path_decision"]["type"];
   const scaffoldSpec: ScaffoldSpec | null =
-    pathType === "scaffold" || pathType === "simplify_challenge"
+    pathType === "scaffold" ||
+    pathType === "simplify_challenge" ||
+    pathType === "reveal_answer_and_advance"
       ? normalizeScaffoldSpec(pdRaw.scaffold_spec, ctx.dimIds, pathType)
       : null;
 
@@ -251,6 +295,31 @@ export function normalizeJudgeOutput(
     script_branch_switch:
       typeof obj.script_branch_switch === "string" ? obj.script_branch_switch : null,
     event_triggers: normalizeEventTriggers(obj.event_triggers),
+    next_response_frame: normalizeNextResponseFrame(obj.next_response_frame),
+  };
+}
+
+function normalizeNextResponseFrame(raw: unknown): NextResponseFrameSelection | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const frameId = typeof r.frame_id === "string" ? r.frame_id.trim() : "";
+  if (!frameId) return null;
+  const reason = typeof r.reason === "string" ? r.reason : "";
+  const overridesRaw =
+    r.overrides && typeof r.overrides === "object"
+      ? (r.overrides as Record<string, unknown>)
+      : null;
+  const overrides: NextResponseFrameSelection["overrides"] = {};
+  if (overridesRaw) {
+    for (const key of ["title", "prompt", "helper_text"] as const) {
+      const value = overridesRaw[key];
+      if (typeof value === "string" && value.trim()) overrides[key] = value;
+    }
+  }
+  return {
+    frame_id: frameId,
+    reason,
+    ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
   };
 }
 
@@ -285,7 +354,9 @@ function normalizeScaffoldSpec(
     strategy = SCAFFOLD_FORM_TO_STRATEGY[rawForm as keyof typeof SCAFFOLD_FORM_TO_STRATEGY];
   } else {
     strategy =
-      pathType === "simplify_challenge" ? "worked_example" : "retrieval_prompt";
+      pathType === "simplify_challenge" || pathType === "reveal_answer_and_advance"
+        ? "worked_example"
+        : "retrieval_prompt";
   }
   const focusDim = (s.focus_dim as string) ?? dimIds[0] ?? "d1";
   const notes = typeof s.notes === "string" ? (s.notes as string) : undefined;

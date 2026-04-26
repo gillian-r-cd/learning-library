@@ -129,6 +129,7 @@ export default function PromptEditor({
               </span>
               <select value={model} onChange={(e) => setModel(e.target.value)} className="input">
                 <option>claude-opus-4-7</option>
+                <option>claude-opus-4-6</option>
                 <option>claude-sonnet-4-6</option>
                 <option>claude-haiku-4-5</option>
               </select>

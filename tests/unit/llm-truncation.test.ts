@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -12,6 +12,10 @@ beforeAll(() => {
   if (!fs.existsSync(path.dirname(TEST_DB))) {
     fs.mkdirSync(path.dirname(TEST_DB), { recursive: true });
   }
+});
+
+beforeEach(() => {
+  createMock.mockReset();
 });
 
 // Stub the SDK so we can drive any stop_reason we want without a network call.
@@ -55,5 +59,44 @@ describe("llmCall · truncation detection", () => {
     });
     expect(res).toBeTruthy();
     expect(res.text).toContain("ok");
+  });
+
+  it("throws LlmProviderError instead of returning empty text on Anthropic API errors", async () => {
+    createMock.mockRejectedValueOnce(
+      new Error('403 {"error":{"type":"forbidden","message":"Request not allowed"}}')
+    );
+    const { llmCall, LlmProviderError } = await import("@/lib/llm");
+
+    await expect(
+      llmCall({
+        caller: "narrator",
+        stage: "learning",
+        variables: {},
+        userVisible: true,
+      })
+    ).rejects.toBeInstanceOf(LlmProviderError);
+  });
+
+  it("passes claude-opus-4-6 through to Anthropic create params", async () => {
+    createMock.mockResolvedValueOnce({
+      content: [{ type: "text", text: '{"ok": true}' }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { llmCall } = await import("@/lib/llm");
+
+    await llmCall({
+      caller: "judge",
+      stage: "learning",
+      variables: {},
+      modelOverride: "claude-opus-4-6",
+    });
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "claude-opus-4-6",
+        temperature: expect.any(Number),
+      })
+    );
   });
 });

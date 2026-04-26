@@ -831,9 +831,18 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "\n" +
         "## 字段枚举\n" +
         "- quality.grade ∈ {good, medium, poor}\n" +
+        "- diagnosis.stuck_reason ∈ {none, missing_context, missing_evidence, concept_confusion, cognitive_overload, transfer_failure, surface_level, self_help, frustration}\n" +
         "- path_decision.type ∈ {advance, retry, scaffold, branch, complete_challenge, reveal_answer_and_advance, escalate_complexity, simplify_challenge}\n" +
         "- scaffold_spec.strategy ∈ {worked_example, contrastive_cases, chunked_walkthrough, analogy_bridge, retrieval_prompt, near_transfer_demo, concept_scaffold, self_explanation}（path ∈ {scaffold, simplify_challenge,reveal_answer_and_advance} 时必须给出 strategy；其他 path 时 scaffold_spec = null）\n" +
         "- companion_dispatch[].role ∈ {speaker, silent}\n" +
+        "\n" +
+        "## 诊断输出规则（必须显式给出，不能只在脑中推理）\n" +
+        "- `diagnosis` 是你对“学员究竟因为什么不会”的结构化诊断，必须每轮输出。\n" +
+        "- `stuck_reason=none` 只允许在所有关键质量维度都达标或本轮没有卡点时使用；只要有 medium/poor，就必须选一个具体原因。\n" +
+        "- `focus_dim_ids` 只放还没达标的 rubric dim_id；已 good 的 dim 不得放进去。\n" +
+        "- `missing_field_ids` 只放下一轮还需要学员补的 response frame field_id；如果学员某个字段已经答对，绝对不要再放进去。字段必须来自 `response_frames[].fields[].field_id`，严禁发明。\n" +
+        "- `evidence` 必须引用学员本轮作答的具体缺口，例如“给了 R2 结论但没有能力证据”，不能写“理解不够”这类空话。\n" +
+        "- 典型映射：缺背景/人物/材料 → missing_context；给结论无证据 → missing_evidence；混淆相近概念 → concept_confusion；表单/多步骤压住 → cognitive_overload；不会迁移旧经验 → transfer_failure；只停留表层描述 → surface_level；明说不会/求例子 → self_help；明显挫败/退出 → frustration。\n" +
         "\n" +
         "## path_decision 语义（极其重要，不要混用）\n" +
         "- `advance`：**留在当前挑战**内继续推进。这是默认选项。每轮表现合格就用 advance。**不会**跳到下一个挑战。\n" +
@@ -900,6 +909,8 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "- `response_frames` 是当前挑战已声明的候选输入框架；你只能选择其中已有的 frame_id，严禁发明新字段或新 UI。\n" +
         "- 学员能自由表达且没有明显卡壳时，next_response_frame=null 或选择 free_text。\n" +
         "- 当学员混淆维度、连续 poor、需要概念支架或只需做选择/填表时，选择一个更结构化的 frame_id，并在 reason 写明为什么降负荷。\n" +
+        "- **同一挑战内绝对不允许要求重填整张表**：如果学员只漏了/错了部分字段，必须在 `next_response_frame.field_ids` 里只列出要补的字段。已经达标的字段不得再次出现。\n" +
+        "- `next_response_frame.field_ids` 必须与 `diagnosis.missing_field_ids` 一致；如果没有字段级缺口则省略或为空。\n" +
         "- overrides 只能覆盖 title/prompt/helper_text 三类文案，不能改变 fields。\n" +
         "\n" +
         "## 招式卡（AWARD_SIGNATURE_MOVE）识别规则\n" +
@@ -930,6 +941,13 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
               { dim_id: "d1", grade: "good", evidence: "学员引用了回避眼神并追问背景，采集深入。" },
               { dim_id: "d2", grade: "medium", evidence: "判断方向对但证据链条只有一层。" },
             ],
+              diagnosis: {
+                stuck_reason: "missing_evidence",
+                evidence: "学员已经给出判断方向，但缺少支撑 d2 的第二层证据。",
+                focus_dim_ids: ["d2"],
+                missing_field_ids: ["evidence"],
+                confidence: "high",
+              },
             path_decision: {
               type: "advance",
               target: null,
@@ -1248,6 +1266,7 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
             "学员这一句：\"{{learner_input}}\"\n" +
             "\n" +
             "Judge 的完整评分（按 dim）：{{judge_quality}}\n" +
+            "Judge 卡点诊断（为什么不会 / 缺哪些字段）：{{judge_diagnosis}}\n" +
             "Judge path_decision：{{judge_path_decision}}\n" +
             "Scaffold 策略（仅当 path ∈ {scaffold, simplify_challenge} 时非空；此时你必须执行「SCAFFOLD 模式产出规则」下对应那一条）：{{scaffold_strategy}}\n" +
             "Scaffold 备注（Judge 可能在 scaffold_spec.notes 里写本轮要特别突出的点）：{{scaffold_notes}}\n" +

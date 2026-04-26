@@ -222,7 +222,11 @@ export async function runTurn(args: {
     });
   }
 
-  const nextFrameSelection = judgeRes.output.next_response_frame;
+  const nextFrameSelection = deriveDynamicNextResponseFrameSelection(
+    judgeRes.output.next_response_frame,
+    judgeRes.output.diagnosis?.missing_field_ids ?? [],
+    snapshot.active_response_frame
+  );
   if (
     nextFrameSelection &&
     !applied.advancedToNewChallenge &&
@@ -532,6 +536,37 @@ export async function runTurn(args: {
     droppedArtifacts: droppedThisTurn,
     helpRequest: helpRequestMeta,
   };
+}
+
+function deriveDynamicNextResponseFrameSelection(
+  selected: import("@/lib/types/core").NextResponseFrameSelection | null | undefined,
+  missingFieldIds: string[],
+  activeFrame: ResponseFrame
+): import("@/lib/types/core").NextResponseFrameSelection | null {
+  const usableMissingFields = missingFieldIds.filter((fieldId) =>
+    activeFrame.fields.some((field) => field.field_id === fieldId)
+  );
+  if (selected) {
+    return selected.field_ids?.length || usableMissingFields.length === 0
+      ? selected
+      : { ...selected, field_ids: usableMissingFields };
+  }
+  if (
+    activeFrame.kind !== "free_text" &&
+    usableMissingFields.length > 0 &&
+    usableMissingFields.length < activeFrame.fields.length
+  ) {
+    return {
+      frame_id: activeFrame.frame_id,
+      reason: "只追问本轮诊断出的缺口，避免要求学员重填已达标字段。",
+      field_ids: usableMissingFields,
+      overrides: {
+        title: "只补还缺的部分",
+        prompt: "前面已经成立的内容不用重填，这轮只补下面这些缺口。",
+      },
+    };
+  }
+  return selected ?? null;
 }
 
 function helpRequestCost(kind: HelpRequest["kind"]): number {

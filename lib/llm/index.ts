@@ -70,6 +70,7 @@ export async function llmCall(args: LlmCallArgs): Promise<LlmCallResult> {
     "success";
   let errorMessage: string | null = null;
   let truncationError: LlmTruncatedError | null = null;
+  let providerError: LlmProviderError | null = null;
 
   try {
     if (useMock) {
@@ -107,6 +108,11 @@ export async function llmCall(args: LlmCallArgs): Promise<LlmCallResult> {
   } catch (e) {
     status = "error";
     errorMessage = (e as Error).message;
+    providerError = new LlmProviderError({
+      caller: args.caller,
+      model,
+      message: errorMessage,
+    });
     output = { error: errorMessage };
     text = "";
   }
@@ -175,6 +181,9 @@ export async function llmCall(args: LlmCallArgs): Promise<LlmCallResult> {
   // Ledger is written first so truncated responses are inspectable, then we
   // throw — callers MUST NOT see a partial/repaired result.
   if (truncationError) throw truncationError;
+  // Same for provider/API errors. Returning empty text made the learning
+  // runtime write blank narrator bubbles and award fallback points.
+  if (providerError) throw providerError;
 
   return {
     callId,
@@ -281,6 +290,19 @@ export class LlmTruncatedError extends Error {
   }
 }
 
+export class LlmProviderError extends Error {
+  readonly code = "llm_provider_error" as const;
+  readonly caller: string;
+  readonly model: string;
+
+  constructor(args: { caller: string; model: string; message: string }) {
+    super(`LLM provider error. caller=${args.caller} model=${args.model}: ${args.message}`);
+    this.name = "LlmProviderError";
+    this.caller = args.caller;
+    this.model = args.model;
+  }
+}
+
 export class LlmConfigurationError extends Error {
   readonly code = "llm_configuration_error" as const;
 
@@ -372,6 +394,7 @@ function estimateCost(model: string, input: number, output: number): number {
   // Per-1M-token pricing for estimation.
   const prices: Record<string, { in: number; out: number }> = {
     "claude-opus-4-7": { in: 15, out: 75 },
+    "claude-opus-4-6": { in: 15, out: 75 },
     "claude-sonnet-4-6": { in: 3, out: 15 },
     "claude-haiku-4-5": { in: 1, out: 5 },
   };

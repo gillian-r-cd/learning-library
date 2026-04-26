@@ -462,6 +462,20 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
   const consecutivePoor = Number(variables.consecutive_poor_in_challenge ?? 0);
   const selfHelp = Boolean(variables.self_help_signal);
   const helpIntent = String(variables.help_intent ?? "none");
+  const responseFrames =
+    (variables.response_frames as
+      | Array<{
+          frame_id: string;
+          kind: string;
+          fields?: Array<{ field_id: string; label?: string }>;
+        }>
+      | undefined) ?? [];
+  const activeFrame = variables.active_response_frame as
+    | { frame_id?: string; kind?: string; title?: string }
+    | undefined;
+  const structuredFrame =
+    responseFrames.find((frame) => frame.frame_id === activeFrame?.frame_id) ??
+    responseFrames.find((frame) => frame.kind !== "free_text");
 
   // Decision priorities:
   //   (1) Self-help signal OR consecutive_poor ≥ 5 → simplify_challenge
@@ -518,6 +532,14 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
     scaffoldStrategy = strategies[challengeTurnIdx % strategies.length];
   }
 
+  const mockMissingFieldIds =
+    grade === "good"
+      ? []
+      : (structuredFrame?.fields ?? [])
+          .map((field) => field.field_id)
+          .filter((fieldId) => !/^(person|name|text)$/.test(fieldId))
+          .slice(0, grade === "medium" ? 1 : 2);
+
   const payload = {
     quality: dims.map((d) => ({
       dim_id: d,
@@ -536,6 +558,25 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
         learner.length > 60 &&
         /我(判断|觉得|认为|想|会)|我的(判断|理解)/.test(learner),
     })),
+    diagnosis: {
+      stuck_reason:
+        helpIntent === "reveal"
+          ? "frustration"
+          : selfHelp
+          ? "self_help"
+          : grade === "good"
+          ? "none"
+          : grade === "medium"
+          ? "surface_level"
+          : "missing_evidence",
+      evidence:
+        grade === "good"
+          ? "本轮没有明显卡点。"
+          : "学员当前回答缺少可核验的关键证据，容易变成只给结论。",
+      focus_dim_ids: grade === "good" ? [] : ["d2", "d3"],
+      missing_field_ids: mockMissingFieldIds,
+      confidence: grade === "good" ? "low" : "medium",
+    },
     path_decision: {
       type: decisionType,
       target: null,
@@ -577,6 +618,18 @@ function mockJudge(variables: Record<string, unknown>): MockResult {
           recognition_hint: string;
         }> | undefined) ?? [],
     }),
+    next_response_frame:
+      structuredFrame && mockMissingFieldIds.length > 0
+        ? {
+            frame_id: structuredFrame.frame_id,
+            reason: "只补本轮诊断出的缺口，避免重复填写已成立字段。",
+            field_ids: mockMissingFieldIds,
+            overrides: {
+              title: "只补还缺的部分",
+              prompt: "前面已经成立的内容不用重填，这轮只补下面这些缺口。",
+            },
+          }
+        : null,
   };
   const text = JSON.stringify(payload);
   return { output: payload, text, promptTokens: 900, outputTokens: 320, cacheRead: 700 };

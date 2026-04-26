@@ -115,6 +115,7 @@ describe("normalizeJudgeOutput — tolerate LLM shape drift", () => {
           overrides: {
             helper_text: "先拆开填写。",
           },
+          field_ids: ["ability_evidence", "willingness_evidence"],
         },
       },
       { dimIds: ["d1"] }
@@ -125,6 +126,34 @@ describe("normalizeJudgeOutput — tolerate LLM shape drift", () => {
       overrides: {
         helper_text: "先拆开填写。",
       },
+      field_ids: ["ability_evidence", "willingness_evidence"],
+    });
+  });
+
+  it("normalises explicit stuck diagnosis for audit and dynamic follow-up", () => {
+    const out = normalizeJudgeOutput(
+      {
+        quality: [
+          { dim_id: "d1", grade: "good", evidence: "对象识别正确" },
+          { dim_id: "d2", grade: "poor", evidence: "能力判断没有证据" },
+        ],
+        diagnosis: {
+          stuck_reason: "missing_evidence",
+          evidence: "学员给了结论，但没有写出能力线索。",
+          focus_dim_ids: ["d2"],
+          missing_field_ids: ["ability_evidence"],
+          confidence: "high",
+        },
+      },
+      { dimIds: ["d1", "d2"] }
+    );
+
+    expect(out.diagnosis).toEqual({
+      stuck_reason: "missing_evidence",
+      evidence: "学员给了结论，但没有写出能力线索。",
+      focus_dim_ids: ["d2"],
+      missing_field_ids: ["ability_evidence"],
+      confidence: "high",
     });
   });
 
@@ -204,6 +233,13 @@ describe("normalizeJudgeOutput — tolerate LLM shape drift", () => {
   it("preserves valid fields end-to-end", () => {
     const raw = {
       quality: [{ dim_id: "d1", grade: "good", evidence: "clear" }],
+      diagnosis: {
+        stuck_reason: "none",
+        evidence: "本轮没有明显卡点。",
+        focus_dim_ids: [],
+        missing_field_ids: [],
+        confidence: "low",
+      },
       path_decision: {
         type: "complete_challenge",
         target: null,

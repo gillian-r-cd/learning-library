@@ -143,6 +143,13 @@ describe("Narrator contract — learnerInput always equals the current turn", ()
       snapshot,
       judgeOutput: {
         quality: [{ dim_id: "d1", grade: "good", evidence: "e" }],
+        diagnosis: {
+          stuck_reason: "none",
+          evidence: "本轮没有明显卡点。",
+          focus_dim_ids: [],
+          missing_field_ids: [],
+          confidence: "low",
+        },
         path_decision: { type: "advance", target: null, scaffold_spec: null },
         narrator_directive: "按 directive 收尾",
         companion_dispatch: [],

@@ -19,10 +19,12 @@ import type { ActiveCompanionHook } from "@/lib/learning-runtime/companion-hooks
 import type {
   Grade,
   HelpRequest,
+  JudgeDiagnosis,
   JudgeOutput,
   NextResponseFrameSelection,
   ScaffoldStrategy,
   ScaffoldSpec,
+  StuckReason,
 } from "@/lib/types/core";
 import { SCAFFOLD_FORM_TO_STRATEGY } from "@/lib/types/core";
 import type { Snapshot } from "@/lib/state-manager";
@@ -282,6 +284,7 @@ export function normalizeJudgeOutput(
 
   return {
     quality,
+    diagnosis: normalizeDiagnosis(obj.diagnosis, quality, ctx.dimIds),
     path_decision: {
       type: pathType,
       target: (pdRaw.target as string | null) ?? null,
@@ -319,8 +322,86 @@ function normalizeNextResponseFrame(raw: unknown): NextResponseFrameSelection | 
   return {
     frame_id: frameId,
     reason,
+    ...normalizeFieldIds(r.field_ids),
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
   };
+}
+
+const VALID_STUCK_REASONS: StuckReason[] = [
+  "none",
+  "missing_context",
+  "missing_evidence",
+  "concept_confusion",
+  "cognitive_overload",
+  "transfer_failure",
+  "surface_level",
+  "self_help",
+  "frustration",
+];
+
+function normalizeDiagnosis(
+  raw: unknown,
+  quality: JudgeOutput["quality"],
+  dimIds: string[]
+): JudgeDiagnosis {
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const rawReason = r.stuck_reason;
+  const stuckReason = VALID_STUCK_REASONS.includes(rawReason as StuckReason)
+    ? (rawReason as StuckReason)
+    : inferStuckReason(quality);
+  const focusDimIds = stringArray(r.focus_dim_ids).filter((id) =>
+    dimIds.length === 0 ? true : dimIds.includes(id)
+  );
+  const inferredFocus = quality
+    .filter((q) => q.grade !== "good")
+    .map((q) => q.dim_id)
+    .filter(Boolean);
+  const confidence = ["low", "medium", "high"].includes(String(r.confidence))
+    ? (r.confidence as "low" | "medium" | "high")
+    : raw && typeof raw === "object"
+    ? "medium"
+    : "low";
+  return {
+    stuck_reason: stuckReason,
+    evidence:
+      typeof r.evidence === "string" && r.evidence.trim()
+        ? r.evidence
+        : defaultDiagnosisEvidence(stuckReason, quality),
+    focus_dim_ids: focusDimIds.length > 0 ? focusDimIds : inferredFocus,
+    missing_field_ids: stringArray(r.missing_field_ids),
+    confidence,
+  };
+}
+
+function normalizeFieldIds(raw: unknown): Pick<NextResponseFrameSelection, "field_ids"> | {} {
+  const fieldIds = stringArray(raw);
+  return fieldIds.length > 0 ? { field_ids: fieldIds } : {};
+}
+
+function stringArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+    )
+  );
+}
+
+function inferStuckReason(quality: JudgeOutput["quality"]): StuckReason {
+  if (quality.some((q) => q.grade === "poor")) return "missing_evidence";
+  if (quality.some((q) => q.grade === "medium")) return "surface_level";
+  return "none";
+}
+
+function defaultDiagnosisEvidence(
+  stuckReason: StuckReason,
+  quality: JudgeOutput["quality"]
+): string {
+  if (stuckReason === "none") return "本轮未诊断出明确卡点。";
+  const weak = quality.find((q) => q.grade !== "good");
+  return weak?.evidence || "Judge 未给出明确卡点，系统按未达标维度生成诊断。";
 }
 
 /** Accept any combination of legacy `form` and modern `strategy` and coerce

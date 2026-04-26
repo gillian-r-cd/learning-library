@@ -11,6 +11,7 @@ function ensureSeed() {
   if (seededOnce) return;
   seededOnce = true;
   seedPrompts();
+  normalizePublishedPromptUniqueness();
 }
 
 export interface StoredPrompt {
@@ -117,8 +118,15 @@ export function upsertPrompt(args: UpsertArgs): StoredPrompt {
   const nextVersion = (latest?.v ?? 0) + 1;
 
   const createdAt = new Date().toISOString();
-  db()
-    .prepare(
+  const d = db();
+  if (args.status === "published") {
+    d.prepare(
+      `UPDATE prompt_store
+       SET status = 'rolled_back'
+       WHERE key = ? AND scope = ? AND status = 'published'`
+    ).run(args.key, args.scope);
+  }
+  d.prepare(
       `INSERT INTO prompt_store
          (key, scope, version, status, body_json, created_at, created_by, note)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -135,8 +143,7 @@ export function upsertPrompt(args: UpsertArgs): StoredPrompt {
     );
 
   // log admin audit
-  db()
-    .prepare(
+  d.prepare(
       `INSERT INTO admin_audit (at, actor, action, target, diff_json) VALUES (?, ?, ?, ?, ?)`
     )
     .run(
@@ -169,9 +176,18 @@ export function listPromptKeys(): {
   ensureSeed();
   const rows = db()
     .prepare(
-      `SELECT key, scope, version, status, created_at FROM prompt_store
-       WHERE status = 'published'
-       ORDER BY scope, key`
+      `SELECT p.key, p.scope, p.version, p.status, p.created_at
+       FROM prompt_store p
+       INNER JOIN (
+         SELECT key, scope, MAX(version) AS version
+         FROM prompt_store
+         WHERE status = 'published'
+         GROUP BY key, scope
+       ) latest
+         ON latest.key = p.key
+        AND latest.scope = p.scope
+        AND latest.version = p.version
+       ORDER BY p.scope, p.key`
     )
     .all() as {
     key: string;
@@ -181,6 +197,24 @@ export function listPromptKeys(): {
     created_at: string;
   }[];
   return rows;
+}
+
+function normalizePublishedPromptUniqueness(): void {
+  db()
+    .prepare(
+      `UPDATE prompt_store
+       SET status = 'rolled_back'
+       WHERE status = 'published'
+         AND EXISTS (
+           SELECT 1
+           FROM prompt_store newer
+           WHERE newer.key = prompt_store.key
+             AND newer.scope = prompt_store.scope
+             AND newer.status = 'published'
+             AND newer.version > prompt_store.version
+         )`
+    )
+    .run();
 }
 
 export function getPromptHistory(

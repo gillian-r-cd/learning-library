@@ -88,10 +88,12 @@ export function resolveActiveResponseFrame(
     : null;
   const base = selected ?? frames.find((frame) => frame.frame_id === defaultFrameId) ?? frames[0];
   if (!base) return defaultFreeTextFrame(challenge.binds_actions);
-  if (!selection?.overrides || !selected) return base;
+  if (!selected) return base;
+  const narrowedFields = narrowFields(base.fields, selection?.field_ids);
   return {
     ...base,
-    ...definedOverrides(selection.overrides),
+    ...definedOverrides(selection?.overrides),
+    fields: narrowedFields,
   };
 }
 
@@ -161,7 +163,15 @@ function normalizeFrame(raw: ResponseFrame, bindActions: string[]): ResponseFram
   };
 }
 
-function definedOverrides(overrides: NonNullable<NextResponseFrameSelection["overrides"]>) {
+function narrowFields(fields: ResponseField[], fieldIds?: string[]): ResponseField[] {
+  if (!Array.isArray(fieldIds) || fieldIds.length === 0) return fields;
+  const wanted = new Set(fieldIds.map((id) => id.trim()).filter(Boolean));
+  const narrowed = fields.filter((field) => wanted.has(field.field_id));
+  return narrowed.length > 0 ? narrowed : fields;
+}
+
+function definedOverrides(overrides?: NextResponseFrameSelection["overrides"]) {
+  if (!overrides) return {};
   return Object.fromEntries(
     Object.entries(overrides).filter(([, value]) => typeof value === "string" && value.trim())
   );

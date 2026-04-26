@@ -464,6 +464,7 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
       // Block 3 · this-turn dynamics
       learner_input: learnerInput,
       judge_quality: judgeQuality,
+      judge_diagnosis: args.judgeOutput.diagnosis,
       judge_path_decision: args.judgeOutput.path_decision ?? {
         type: "advance",
         target: null,

@@ -166,6 +166,10 @@ export interface LearnerStructuredResponse {
 export interface NextResponseFrameSelection {
   frame_id: string;
   reason: string;
+  /** Optional field-level narrowing. When set, the learner only sees these
+   *  existing fields from the selected frame, so already-correct answers are
+   *  not requested again in the same challenge. */
+  field_ids?: string[];
   overrides?: {
     title?: string;
     prompt?: string;
@@ -640,6 +644,28 @@ export interface ScaffoldSpec {
   notes?: string;
 }
 
+export type StuckReason =
+  | "none"
+  | "missing_context"
+  | "missing_evidence"
+  | "concept_confusion"
+  | "cognitive_overload"
+  | "transfer_failure"
+  | "surface_level"
+  | "self_help"
+  | "frustration";
+
+export interface JudgeDiagnosis {
+  stuck_reason: StuckReason;
+  /** Concrete text evidence for the diagnosis. Never a generic label. */
+  evidence: string;
+  /** Rubric dimensions that explain what is still blocking progress. */
+  focus_dim_ids: string[];
+  /** Response-frame fields that should be asked again, if a structured frame is used. */
+  missing_field_ids: string[];
+  confidence: "low" | "medium" | "high";
+}
+
 export interface JudgeOutput {
   quality: {
     dim_id: string;
@@ -649,6 +675,7 @@ export interface JudgeOutput {
      *  to a single row-level `quotable` on evidence_log. */
     quotable?: boolean;
   }[];
+  diagnosis: JudgeDiagnosis;
   path_decision: {
     type: PathDecisionType;
     target?: string | null;

@@ -63,6 +63,48 @@ describe("response frame normalisation", () => {
 
     expect(active.frame_id).toBe("rf_choice");
   });
+
+  it("narrows a structured frame to the fields Judge says still need work", () => {
+    const challenge = {
+      challenge_id: "ch1",
+      title: "诊断准备度",
+      binds_actions: ["a1"],
+      complexity: "low",
+      trunk: { setup: "setup", action_prompts: [], expected_signals: [] },
+      companion_hooks: [],
+      response_frames: [
+        {
+          frame_id: "rf_form",
+          version: 1,
+          kind: "form",
+          title: "准备度诊断表",
+          prompt: "拆开填写。",
+          binds_actions: ["a1"],
+          fields: [
+            { field_id: "person", type: "text", label: "对象", required: true },
+            { field_id: "ability", type: "radio", label: "能力水平", required: true },
+            { field_id: "ability_evidence", type: "textarea", label: "能力证据", required: true },
+            { field_id: "willingness", type: "radio", label: "意愿水平", required: true },
+          ],
+        },
+      ],
+      default_response_frame_id: "rf_form",
+    } satisfies Challenge;
+
+    const active = resolveActiveResponseFrame(challenge, {
+      frame_id: "rf_form",
+      reason: "对象与意愿已达标，只补能力证据。",
+      field_ids: ["ability_evidence"],
+      overrides: {
+        title: "只补能力证据",
+        prompt: "前面对象和意愿不用重填，这轮只补能力证据。",
+      },
+    });
+
+    expect(active.title).toBe("只补能力证据");
+    expect(active.prompt).toBe("前面对象和意愿不用重填，这轮只补能力证据。");
+    expect(active.fields.map((field) => field.field_id)).toEqual(["ability_evidence"]);
+  });
 });
 
 describe("structured learner response", () => {

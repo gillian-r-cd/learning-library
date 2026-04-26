@@ -238,9 +238,11 @@ function validateOpeningOutput(
   if (ctx.variant === "first" && !openingContainsLearnerIdentity(text, ctx.protagonistRole)) {
     issues.push("missing-learner-identity");
   }
-  // If there are artifacts expected to drop, text should reference at least one by name substring
+  // If artifacts are about to drop, the opening should point at at least one.
+  // Do not require the exact full title: good prose often says "屏幕使用时间面板"
+  // instead of the literal artifact name "屏幕使用时间 · 最近 7 天".
   if (ctx.artifactNames.length > 0) {
-    const anyHit = ctx.artifactNames.some((n) => n && text.includes(n));
+    const anyHit = ctx.artifactNames.some((n) => artifactReferenced(text, n));
     if (!anyHit) issues.push("missing-artifact-reference");
   }
   // HARD GUARDRAIL: no off-whitelist declared characters in the output.
@@ -256,6 +258,28 @@ function validateOpeningOutput(
     issues.push(`off-roster-character:${offroster.join(",")}`);
   }
   return { ok: issues.length === 0, issues };
+}
+
+function artifactReferenced(text: string, artifactName: string): boolean {
+  const name = artifactName.trim();
+  if (!name) return false;
+  if (text.includes(name)) return true;
+  const compactText = compactForMatch(text);
+  const compactName = compactForMatch(name);
+  if (compactName.length >= 3 && compactText.includes(compactName)) return true;
+  return artifactNameTokens(name).some((token) => compactText.includes(compactForMatch(token)));
+}
+
+function artifactNameTokens(name: string): string[] {
+  return name
+    .split(/[·\-—–|｜:：/（）()【】《》\s]+/)
+    .map((part) => part.trim())
+    .filter((part) => /[一-龥A-Za-z0-9]/.test(part))
+    .filter((part) => compactForMatch(part).length >= 4);
+}
+
+function compactForMatch(value: string): string {
+  return value.replace(/\s+/g, "").replace(/[·\-—–|｜:：/（）()【】《》，,。.]/g, "");
 }
 
 function fallbackOpening(

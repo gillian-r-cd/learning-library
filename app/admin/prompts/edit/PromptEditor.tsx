@@ -1,7 +1,18 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { StoredPrompt } from "@/lib/prompt-store";
+import type { PromptBody } from "@/lib/prompt-store/render";
 import { fetchJSON } from "@/lib/client/fetchJson";
+
+interface HistoryEntry {
+  version: number;
+  created_at: string;
+  status: string;
+  note: string | null;
+  created_by: string;
+  body: PromptBody;
+}
 
 export default function PromptEditor({
   keyName,
@@ -12,18 +23,49 @@ export default function PromptEditor({
   keyName: string;
   scope: string;
   current: StoredPrompt | null;
-  history: { version: number; created_at: string; status: string; note: string | null }[];
+  history: HistoryEntry[];
 }) {
-  const [systemText, setSystemText] = useState(current?.body.system ?? "");
-  const [userText, setUserText] = useState(current?.body.messages[0]?.content ?? "");
-  const [temperature, setTemperature] = useState(current?.body.temperature ?? 0.7);
-  const [maxTokens, setMaxTokens] = useState(current?.body.max_tokens ?? 1024);
-  const [model, setModel] = useState(current?.body.model ?? "claude-opus-4-7");
+  // Which version's body is currently shown in the editor. Defaults to the
+  // latest published (`current`); selecting a row in the history panel loads
+  // that version's body into the editor textareas.
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(
+    current?.version ?? null
+  );
+
+  const selectedEntry = history.find((h) => h.version === selectedVersion) ?? null;
+  const baseBody = selectedEntry?.body ?? current?.body ?? null;
+
+  const [systemText, setSystemText] = useState(baseBody?.system ?? "");
+  const [userText, setUserText] = useState(baseBody?.messages?.[0]?.content ?? "");
+  const [temperature, setTemperature] = useState(baseBody?.temperature ?? 0.7);
+  const [maxTokens, setMaxTokens] = useState(baseBody?.max_tokens ?? 1024);
+  const [model, setModel] = useState(baseBody?.model ?? "claude-opus-4-7");
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
 
-  async function publish() {
+  function selectVersion(v: number) {
+    const entry = history.find((h) => h.version === v);
+    if (!entry) return;
+    setSelectedVersion(v);
+    setSystemText(entry.body.system ?? "");
+    setUserText(entry.body.messages?.[0]?.content ?? "");
+    setTemperature(entry.body.temperature ?? 0.7);
+    setMaxTokens(entry.body.max_tokens ?? 1024);
+    setModel(entry.body.model ?? "claude-opus-4-7");
+    setMsg(null);
+  }
+
+  // Latest published version number — used to decide whether "apply" makes
+  // sense (no-op if you re-apply the version that's already published).
+  const latestPublishedVersion =
+    history.find((h) => h.status === "published")?.version ?? current?.version ?? null;
+
+  const isApplyingHistorical =
+    selectedVersion !== null && selectedVersion !== latestPublishedVersion;
+
+  async function publish(args?: { applyHistorical?: boolean }) {
     setBusy(true);
     setMsg(null);
     try {
@@ -34,12 +76,21 @@ export default function PromptEditor({
         max_tokens: Number(maxTokens),
         model,
       };
+      const noteForApply = args?.applyHistorical
+        ? `apply v${selectedVersion} as new published${note ? ` · ${note}` : ""}`
+        : note;
       const r = await fetchJSON<{ prompt?: { version: number }; error?: string }>(
         "/api/admin/prompts",
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ key: keyName, scope, body, note, created_by: "admin-ui" }),
+          body: JSON.stringify({
+            key: keyName,
+            scope,
+            body,
+            note: noteForApply,
+            created_by: args?.applyHistorical ? "admin-ui-apply" : "admin-ui",
+          }),
         }
       );
       if (r.networkError) {
@@ -47,49 +98,14 @@ export default function PromptEditor({
         return;
       }
       if (r.data?.prompt) {
-        setMsg(`✅ 已发布 v${r.data.prompt.version} Published v${r.data.prompt.version}`);
-      } else {
-        setMsg(`❌ ${r.data?.error ?? r.error ?? "unknown error"}`);
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resetToSeed() {
-    if (scope !== "system") {
-      setMsg("⚠️ 只能重置系统级模板 / Only system-level templates can be reset.");
-      return;
-    }
-    const confirmed =
-      typeof window !== "undefined" &&
-      window.confirm(
-        "将创建一个新版本，内容覆盖为代码里的默认 seed。当前自定义版本仍保留在历史里，可回看。\n\nProceed to reset to built-in default?"
-      );
-    if (!confirmed) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await fetchJSON<{
-        ok?: boolean;
-        new_version?: number;
-        replaced_user_edit?: boolean;
-        error?: string;
-      }>("/api/admin/prompts/reset", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: keyName }),
-      });
-      if (r.networkError) {
-        setMsg(`⚠️ ${r.error}`);
-        return;
-      }
-      if (r.data?.ok) {
+        const v = r.data.prompt.version;
         setMsg(
-          `✅ 已重置为默认 seed（新版本 v${r.data.new_version}${
-            r.data.replaced_user_edit ? "；之前的用户编辑已保留在历史" : ""
-          }）。刷新页面查看最新内容。`
+          args?.applyHistorical
+            ? `✅ 已将 v${selectedVersion} 应用为最新版本 v${v} / Applied v${selectedVersion} as new v${v}`
+            : `✅ 已发布 v${v} Published v${v}`
         );
+        // Refresh server data so the history panel picks up the new row.
+        router.refresh();
       } else {
         setMsg(`❌ ${r.data?.error ?? r.error ?? "unknown error"}`);
       }
@@ -173,22 +189,26 @@ export default function PromptEditor({
             <button
               className="btn-primary"
               data-test-id="publish-prompt"
-              onClick={publish}
+              onClick={() => publish()}
               disabled={busy || !systemText.trim()}
             >
               {busy ? "发布中 Publishing ..." : "发布新版本 Publish"}
             </button>
-            {scope === "system" && (
-              <button
-                className="btn"
-                data-test-id="reset-prompt-to-seed"
-                onClick={resetToSeed}
-                disabled={busy}
-                title="覆盖为代码里的默认 seed 内容 / overwrite with the built-in default"
-              >
-                重置为默认 Reset to default
-              </button>
-            )}
+            <button
+              className="btn"
+              data-test-id="apply-this-version"
+              onClick={() => publish({ applyHistorical: true })}
+              disabled={busy || !isApplyingHistorical || !systemText.trim()}
+              title={
+                isApplyingHistorical
+                  ? `把右侧选中的 v${selectedVersion} 应用为新的当前版本（不会丢失任何历史） / publish v${selectedVersion} as the new published version`
+                  : "右侧版本历史里选一个非当前版本即可启用 / pick a non-current historical version on the right to enable"
+              }
+            >
+              {isApplyingHistorical
+                ? `应用 v${selectedVersion} Apply v${selectedVersion}`
+                : "应用此版本 Apply this version"}
+            </button>
             {msg && <span className="text-xs text-muted">{msg}</span>}
           </div>
         </div>
@@ -214,20 +234,59 @@ export default function PromptEditor({
         <div className="font-semibold mb-2">
           版本历史 <span className="text-muted font-normal text-sm">Version history</span>
         </div>
+        <p className="text-xs text-muted mb-2">
+          点击任一版本即可在左侧编辑器预览其内容；如需应用，点击「应用此版本」。
+          <br />
+          Click any version to preview it in the editor; click &ldquo;Apply&rdquo; to publish it as the new current version.
+        </p>
         {history.length === 0 ? (
           <p className="text-xs text-muted">还没有版本。 / No versions yet.</p>
         ) : (
           <ul className="text-xs space-y-1">
-            {history.map((h) => (
-              <li key={h.version} className="card-sub">
-                <div className="flex items-center gap-2">
-                  <span className="chip">v{h.version}</span>
-                  <span className="text-muted">{h.status}</span>
-                </div>
-                <div className="text-muted">{new Date(h.created_at).toLocaleString()}</div>
-                {h.note && <div className="mt-1">{h.note}</div>}
-              </li>
-            ))}
+            {history.map((h) => {
+              const isSelected = h.version === selectedVersion;
+              const isCurrent = h.version === latestPublishedVersion;
+              return (
+                <li key={h.version}>
+                  <button
+                    type="button"
+                    onClick={() => selectVersion(h.version)}
+                    className={`card-sub w-full text-left transition ${
+                      isSelected
+                        ? "border-accent ring-2 ring-accent/20"
+                        : "hover:border-accent/60"
+                    }`}
+                    data-test-id={`prompt-version-${h.version}`}
+                    aria-pressed={isSelected}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="chip">v{h.version}</span>
+                      <span className="text-muted">{h.status}</span>
+                      {isCurrent && (
+                        <span className="chip chip-confirmed">当前 current</span>
+                      )}
+                      {h.created_by !== "seed" && (
+                        <span className="chip" title={`created_by=${h.created_by}`}>
+                          {h.created_by}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-muted">
+                      {new Date(h.created_at).toLocaleString("zh-CN", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        hour12: false,
+                      })}
+                    </div>
+                    {h.note && <div className="mt-1 break-words">{h.note}</div>}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

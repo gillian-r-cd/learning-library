@@ -36,7 +36,14 @@ export default async function EditPrompt({
         keyName={key}
         scope={scope}
         current={current}
-        history={history.map((h) => ({ version: h.version, created_at: h.created_at, status: h.status, note: h.note ?? null }))}
+        history={history.map((h) => ({
+          version: h.version,
+          created_at: h.created_at,
+          status: h.status,
+          note: h.note ?? null,
+          created_by: h.created_by,
+          body: h.body,
+        }))}
       />
     </div>
   );

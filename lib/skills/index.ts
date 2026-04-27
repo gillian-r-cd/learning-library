@@ -172,6 +172,13 @@ export async function runSkill3Fill(
     const currentArcStage = chap.arc_stage_id
       ? arcStageById.get(chap.arc_stage_id) ?? null
       : null;
+    // Accumulate prior chapters' premises so the LLM can reuse named
+    // characters across chapters (avoid 周明 → 周铭 / 王哲 → 吴航 drift).
+    const priorChapters = filledChapters.map((pc) => ({
+      chapter_id: pc.chapter_id,
+      title: pc.title,
+      narrative_premise: pc.narrative_premise ?? "",
+    }));
     const { result: res, chapter: filledChapter } = await llmCallWithValidationRetry(
       () =>
         llmCall({
@@ -183,6 +190,7 @@ export async function runSkill3Fill(
               journey_meta: journeyMeta,
               chapter: chap,
               current_arc_stage: currentArcStage,
+              prior_chapters: priorChapters,
             },
           },
         }),

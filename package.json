@@ -11,7 +11,9 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test": "npm run test:unit && npm run test:e2e",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "dump-prompts": "tsx scripts/dump-prompts.ts",
+    "apply-revised-prompts": "tsx scripts/apply-revised-prompts.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

@@ -281,6 +281,66 @@ export default function LearnerSession({
     }
   }
 
+  /** Fast-forward path used by the narrative_choice frame's "我有话想直接说"
+   *  button. Bypasses the structured response and posts the typed text via
+   *  the plain input path; runtime treats it as a regular graded turn for
+   *  this single iteration without resetting ladder progress. */
+  async function sendFastForward(text: string) {
+    if (busy) return;
+    setBusy(true);
+    setMsgs((l) => [...l, { role: "learner", text, ts: Date.now() }]);
+    try {
+      type TurnData = {
+        error?: string;
+        narratorText?: string;
+        judgeOutput?: JudgeOutput;
+        newUnlocks?: string[];
+        newTotal?: number;
+        effectiveTotal?: number;
+        position?: LearnerState["position"];
+      };
+      const r = await fetchJSON<TurnData>("/api/learning/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ learner_id: learner.learner_id, input: text }),
+      });
+      if (r.networkError || !r.ok || r.data?.error) {
+        setMsgs((l) => [
+          ...l,
+          {
+            role: "system",
+            who: "error",
+            text: `❌ ${r.data?.error ?? r.error ?? "服务返回错误"}`,
+            ts: Date.now(),
+          },
+        ]);
+        return;
+      }
+      const j = r.data!;
+      setLastJudge(j.judgeOutput ?? null);
+      setSnapshot((prev) => ({
+        ...prev,
+        learner: {
+          ...prev.learner,
+          points: { ...prev.learner.points, total: j.newTotal ?? prev.learner.points.total },
+          position: j.position ?? prev.learner.position,
+        },
+        effective_total: j.effectiveTotal ?? prev.effective_total,
+      }));
+      await syncConversation();
+      // Re-fetch to pick up evidence + ladder state + frame change.
+      const sres = await fetchJSON<{ snapshot?: Snapshot }>(
+        `/api/learning/learners/${learner.learner_id}`,
+        { headers: { "content-type": "application/json" } }
+      );
+      if (sres.ok && sres.data?.snapshot) {
+        setSnapshot(sres.data.snapshot);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function requestHelp(kind: HelpRequest["kind"]) {
     if (busy) return;
     setBusy(true);
@@ -415,6 +475,7 @@ export default function LearnerSession({
           frame={snapshot.active_response_frame}
           busy={busy}
           onSubmit={send}
+          onFastForward={sendFastForward}
         />
         <HelpBar busy={busy} onRequestHelp={requestHelp} />
       </div>

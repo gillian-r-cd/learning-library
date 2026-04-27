@@ -29,6 +29,7 @@ import { runNarratorOpening } from "@/lib/narrator";
 import {
   normalizeResponseFrames,
   resolveActiveResponseFrame,
+  resolveLadderAwareFrame,
 } from "@/lib/learning-runtime/response-frames";
 
 export {
@@ -200,6 +201,70 @@ export function deleteLearner(learnerId: string): LearnerDeleteCounts {
   return deleteLearners([learnerId]);
 }
 
+/** Read or initialise the learner's ladder progress for a given challenge.
+ *  If no record exists yet, position defaults to the challenge's
+ *  default_ladder_position (or 0 if absent). */
+export function getOrInitLadderProgress(
+  learnerId: string,
+  challenge: { challenge_id: string; binds_actions: string[]; default_ladder_position?: number }
+): { state: LearnerState; progress: import("@/lib/types/core").LadderProgress } | null {
+  const s = getLearnerState(learnerId);
+  if (!s) return null;
+  if (!s.ladder_progress) s.ladder_progress = {};
+  let progress = s.ladder_progress[challenge.challenge_id];
+  if (!progress) {
+    progress = {
+      challenge_id: challenge.challenge_id,
+      position: challenge.default_ladder_position ?? 0,
+      advances_at_position: 0,
+      action_id: challenge.binds_actions?.[0] ?? "a1",
+      updated_at: new Date().toISOString(),
+    };
+    s.ladder_progress[challenge.challenge_id] = progress;
+    saveLearnerState(s);
+  }
+  return { state: s, progress };
+}
+
+/** Increment advances_at_position for the learner's current ladder rung. */
+export function incrementLadderAdvances(
+  learnerId: string,
+  challengeId: string
+): import("@/lib/types/core").LadderProgress | null {
+  const s = getLearnerState(learnerId);
+  if (!s || !s.ladder_progress) return null;
+  const cur = s.ladder_progress[challengeId];
+  if (!cur) return null;
+  const next = {
+    ...cur,
+    advances_at_position: cur.advances_at_position + 1,
+    updated_at: new Date().toISOString(),
+  };
+  s.ladder_progress[challengeId] = next;
+  saveLearnerState(s);
+  return next;
+}
+
+/** Move the learner to the next ladder position, resetting advances counter. */
+export function escalateLadderPosition(
+  learnerId: string,
+  challengeId: string
+): import("@/lib/types/core").LadderProgress | null {
+  const s = getLearnerState(learnerId);
+  if (!s || !s.ladder_progress) return null;
+  const cur = s.ladder_progress[challengeId];
+  if (!cur) return null;
+  const next = {
+    ...cur,
+    position: cur.position + 1,
+    advances_at_position: 0,
+    updated_at: new Date().toISOString(),
+  };
+  s.ladder_progress[challengeId] = next;
+  saveLearnerState(s);
+  return next;
+}
+
 export function deleteLearners(learnerIds: string[]): LearnerDeleteCounts {
   const counts: LearnerDeleteCounts = {
     learners: 0,
@@ -308,12 +373,26 @@ export function buildSnapshot(learnerId: string): Snapshot {
       binds_actions: currentChallenge?.binds_actions ?? [],
       response_frames: undefined,
       default_response_frame_id: undefined,
+      scaffold_ladder: undefined,
+      default_ladder_position: undefined,
     };
   const normalizedFrames = normalizeResponseFrames(responseFrameSource);
   const persistedSelection =
     s.active_response_frame?.challenge_id === s.position.challenge_id
       ? s.active_response_frame.selection
       : null;
+  // Ladder-aware frame resolution: if the challenge declares a scaffold_ladder
+  // and the learner has progress on it, the rung's frame wins over the legacy
+  // default_response_frame_id. Existing dynamic selection (via Judge's
+  // next_response_frame) still has highest priority via persistedSelection.
+  const ladderProgress = cl
+    ? (s.ladder_progress ?? {})[s.position.challenge_id] ?? null
+    : null;
+  const ladderResolution = resolveLadderAwareFrame({
+    challenge: responseFrameSource,
+    ladderProgress,
+    selection: persistedSelection,
+  });
 
   return {
     learner: s,
@@ -323,7 +402,7 @@ export function buildSnapshot(learnerId: string): Snapshot {
     current_challenge: currentChallenge,
     rubric_column,
     response_frames: normalizedFrames.frames,
-    active_response_frame: resolveActiveResponseFrame(responseFrameSource, persistedSelection),
+    active_response_frame: ladderResolution.frame,
   };
 }
 
@@ -446,6 +525,23 @@ export function applyJudgeOutput(input: ApplyJudgeInput): {
   const bp = getBlueprint(s.blueprint_id);
   if (!bp) throw new Error("blueprint not found");
 
+  // narrative_advance is a lightweight path: the learner clicked a
+  // narrative_choice option. The runtime has already written a light evidence
+  // row and the ladder-advance counter increment will happen in runTurn after
+  // this returns. Here we just bump turn_idx and short-circuit the rest of
+  // the points / mastery / unlock pipeline.
+  if (input.decisionType === "narrative_advance") {
+    s.position.turn_idx += 1;
+    saveLearnerState(s);
+    return {
+      state: s,
+      pointsEarned: 0,
+      newUnlocks: [],
+      advancedToNewChallenge: null,
+      completedChallenge: null,
+    };
+  }
+
   // Compute points first so we can persist them alongside evidence.
   const avgGrade = averageGrade(Object.values(input.grades));
   const earned = computePoints({ grades: Object.values(input.grades), complexity: input.complexity });
@@ -482,6 +578,36 @@ export function applyJudgeOutput(input: ApplyJudgeInput): {
     last_review_at: now,
   };
   s.points.total = Math.round((s.points.total + earned) * 10) / 10;
+
+  // Cross-challenge action mastery — drives scaffold ladder escalation.
+  // Counts per grade buckets + a consecutive-good streak so ladder gates
+  // like `after_action_mastery_at_least: { threshold: N }` can be
+  // evaluated against either the cumulative good_count or the streak.
+  if (!s.action_mastery) s.action_mastery = {};
+  const masteryPrev = s.action_mastery[input.actionId] ?? {
+    attempts: 0,
+    good_count: 0,
+    medium_count: 0,
+    poor_count: 0,
+    consecutive_good: 0,
+    last_seen_at: now,
+    last_challenge_id: s.position.challenge_id,
+  };
+  const masteryUpdate = { ...masteryPrev };
+  masteryUpdate.attempts += 1;
+  if (avgGrade === "good") {
+    masteryUpdate.good_count += 1;
+    masteryUpdate.consecutive_good += 1;
+  } else if (avgGrade === "medium") {
+    masteryUpdate.medium_count += 1;
+    masteryUpdate.consecutive_good = 0;
+  } else {
+    masteryUpdate.poor_count += 1;
+    masteryUpdate.consecutive_good = 0;
+  }
+  masteryUpdate.last_seen_at = now;
+  masteryUpdate.last_challenge_id = s.position.challenge_id;
+  s.action_mastery[input.actionId] = masteryUpdate;
 
   // Determine position change.
   //

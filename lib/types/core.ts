@@ -97,7 +97,11 @@ export type ResponseFrameKind =
   | "ranking"
   | "matrix"
   | "allocation"
-  | "compound";
+  | "compound"
+  /** Light-touch narrative choice. The learner taps one of 2-3 buttons; the
+   *  story advances. Goes through a lightweight judge path (cognitive_signal
+   *  recorded but no grade computed). See `docs/scaffold-ladder-redesign.md`. */
+  | "narrative_choice";
 
 export type ResponseFieldType =
   | "text"
@@ -115,6 +119,19 @@ export interface ResponseOption {
   value: string;
   label: string;
   description?: string;
+  /** Only used when the parent frame.kind === "narrative_choice".
+   *  Story content the narrator must weave when this option is chosen.
+   *  Should be ≥30 chars, written by Skill 3 Fill at design time. */
+  narrative_payoff?: string;
+  /** Only used for narrative_choice. Lightweight signal about the cognitive
+   *  posture this option reveals (recorded in evidence_log; never graded). */
+  cognitive_signal?: {
+    action_id?: string;
+    /** Free-form one-or-two-token tag, e.g. "ability_lean", "willingness_lean",
+     *  "ambiguous", "context_seeking". Values are not enumerated; Skill 3 Fill
+     *  decides per option. */
+    tag: string;
+  };
 }
 
 export interface ResponseField {
@@ -177,6 +194,36 @@ export interface NextResponseFrameSelection {
   };
 }
 
+/** Scaffold ladder gate — when does the learner get to climb to the next rung?
+ *  Skill 3 Fill writes this at design time; runtime evaluates it after each
+ *  turn to decide whether to escalate the active frame. */
+export type ScaffoldLadderGate =
+  /** N successful narrative_advance turns at this rung have accumulated. */
+  | { type: "after_n_advances"; n: number }
+  /** Cross-challenge: the learner has at least N good-grade evidence rows
+   *  on the action this ladder is for. */
+  | { type: "after_action_mastery_at_least"; threshold: number }
+  /** Judge / Narrator decides; runtime defers to a path_decision.type === "escalate_frame". */
+  | { type: "narrator_decision"; cue: string }
+  /** Final rung — no further escalation possible. */
+  | null;
+
+/** A single rung on the scaffold ladder for a challenge. Each rung references
+ *  one of the challenge's response_frames via frame_id. The runtime maintains
+ *  a position (0-indexed) per learner per challenge, escalating per gate. */
+export interface ScaffoldLadderRung {
+  position: number;
+  /** Mirrors the referenced frame's kind; set redundantly so runtime/judge can
+   *  branch without a frame lookup. */
+  kind: "narrative_choice" | "form" | "free_text";
+  /** Must match an entry in challenge.response_frames. */
+  frame_id: string;
+  /** Why this rung exists (Skill 3 Fill rationale; not shown to learner). */
+  narrative_purpose: string;
+  /** Condition for the runtime to escalate to position+1. `null` = terminal. */
+  gate_to_next: ScaffoldLadderGate;
+}
+
 export interface Challenge {
   challenge_id: string;
   title: string;
@@ -193,6 +240,12 @@ export interface Challenge {
   /** Schema-driven learner reply frames; normalised to include free_text. */
   response_frames?: ResponseFrame[];
   default_response_frame_id?: string;
+  /** Optional ordered scaffold ladder. When present, runtime drives frame
+   *  escalation through this ladder; absent → fall back to legacy
+   *  default_response_frame_id behaviour. */
+  scaffold_ladder?: ScaffoldLadderRung[];
+  /** Where on the ladder this challenge starts. Defaults to 0. */
+  default_ladder_position?: number;
 }
 
 // ===== Artifacts (道具) =====
@@ -505,6 +558,32 @@ export interface EarnedSignatureMove {
   first_challenge_id: string;
 }
 
+/** Per-action accumulated mastery, used to gate frame escalation across
+ *  challenges. Updated by `applyJudgeOutput` after every graded turn. */
+export interface ActionMasteryRecord {
+  attempts: number;
+  good_count: number;
+  medium_count: number;
+  poor_count: number;
+  consecutive_good: number;
+  last_seen_at: string;
+  last_challenge_id: string;
+}
+
+/** Per-(learner, challenge) record of which scaffold ladder rung the learner
+ *  is on. Persisted on LearnerState; runtime reads at turn entry, writes on
+ *  narrative_advance / escalate_frame. */
+export interface LadderProgress {
+  challenge_id: string;
+  position: number;
+  /** Number of completed narrative_advance turns at the current position. */
+  advances_at_position: number;
+  /** Last action this challenge's ladder is anchored to (the first
+   *  binds_action; recorded for clarity). */
+  action_id: string;
+  updated_at: string;
+}
+
 export interface LearnerState {
   learner_id: string;
   blueprint_id: string;
@@ -525,6 +604,11 @@ export interface LearnerState {
   } | null;
   /** Every signature_move the learner has earned at least once. */
   earned_signature_moves?: EarnedSignatureMove[];
+  /** Cross-challenge mastery counters per action_id. Drives ladder escalation
+   *  for challenges whose first binds_action matches a record here. */
+  action_mastery?: Record<string, ActionMasteryRecord>;
+  /** Per-challenge ladder progress (keyed by challenge_id). */
+  ladder_progress?: Record<string, LadderProgress>;
   last_active_at: string;
   created_at: string;
 }
@@ -594,7 +678,16 @@ export type PathDecisionType =
    *  Runtime switches to a combined worked_example + contrastive_cases
    *  production; learner only needs to recognise, not generate. Award 100%
    *  points but tag the evidence row as scaffold_assisted. */
-  | "simplify_challenge";
+  | "simplify_challenge"
+  /** Light-touch story progression. The learner just tapped a
+   *  narrative_choice option; runtime should NOT compute a quality grade,
+   *  but record the option's cognitive_signal as a light-weight evidence
+   *  row and let narrator render the option's narrative_payoff. */
+  | "narrative_advance"
+  /** Learner has met the current ladder rung's gate_to_next; runtime should
+   *  bump ladder_progress.position by 1 and switch the active frame to the
+   *  next rung's frame_id. Narrator runs in "handoff" mode for this turn. */
+  | "escalate_frame";
 
 /** Legacy scaffold form names — kept for backward compatibility with older
  *  Judge outputs. Always mapped to a ScaffoldStrategy at normalisation time. */

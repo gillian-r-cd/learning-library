@@ -10,6 +10,10 @@ import {
   latestConversationEntries,
   writeImmersiveOpening,
   saveLearnerState,
+  writeEvidence,
+  getOrInitLadderProgress,
+  incrementLadderAdvances,
+  escalateLadderPosition,
 } from "@/lib/state-manager";
 import { runJudge, DEFAULT_ACTION_SPACE_RULES } from "@/lib/judge";
 import { runNarrator } from "@/lib/narrator";
@@ -40,6 +44,7 @@ import type {
 import {
   buildLearnerStructuredResponse,
   validateStructuredResponse,
+  shouldEscalateLadder,
   type StructuredResponseInput,
 } from "@/lib/learning-runtime/response-frames";
 
@@ -144,15 +149,58 @@ export async function runTurn(args: {
         learner: snapshot.learner,
       })
     : [];
-  const judgeRes = await runJudge({
-    snapshot,
-    learnerInput,
-    evidenceSummary,
-    actionSpaceRules: DEFAULT_ACTION_SPACE_RULES,
-    traceId,
-    activeCompanionHooks,
-    helpRequest: args.helpRequest ?? null,
-  });
+
+  // 3a. Ladder-aware: if the active frame is a narrative_choice and the
+  //     learner submitted a structured response, branch to the lightweight
+  //     "narrative_advance" path. We synthesise the JudgeOutput instead of
+  //     running the Judge LLM, so this turn is fast, costs no tokens for
+  //     scoring, and produces no grade. Narrator runs in NARRATIVE_BEAT mode
+  //     using the chosen option's narrative_payoff.
+  const activeFrame = snapshot.active_response_frame;
+  const isNarrativeChoice =
+    activeFrame?.kind === "narrative_choice" && !!structuredResponse;
+  let chosenNarrativePayoff = "";
+  let judgeRes: { output: JudgeOutput; callId: string; traceId: string };
+  if (isNarrativeChoice) {
+    const choiceField = activeFrame.fields?.find((f) => f.field_id === "choice");
+    const chosenValue = String(structuredResponse?.values?.choice ?? "");
+    const option = choiceField?.options?.find((o) => o.value === chosenValue);
+    chosenNarrativePayoff = String(option?.narrative_payoff ?? "");
+    const cogTag = option?.cognitive_signal?.tag ?? "ambiguous";
+    judgeRes = {
+      output: {
+        quality: [],
+        diagnosis: {
+          stuck_reason: "none",
+          evidence: `narrative_advance · option=${chosenValue} · signal=${cogTag}`,
+          focus_dim_ids: [],
+          missing_field_ids: [],
+          confidence: "low",
+        },
+        path_decision: {
+          type: "narrative_advance",
+          target: null,
+          scaffold_spec: null,
+        },
+        narrator_directive: "",
+        companion_dispatch: [],
+        event_triggers: [],
+        next_response_frame: null,
+      },
+      callId: `synth_narrative_advance_${randomUUID().slice(0, 6)}`,
+      traceId,
+    };
+  } else {
+    judgeRes = await runJudge({
+      snapshot,
+      learnerInput,
+      evidenceSummary,
+      actionSpaceRules: DEFAULT_ACTION_SPACE_RULES,
+      traceId,
+      activeCompanionHooks,
+      helpRequest: args.helpRequest ?? null,
+    });
+  }
 
   // 4. Apply Judge → State Manager update (every access defensively chained).
   const actionId = snapshot.current_challenge?.binds_actions?.[0] ?? "a1";
@@ -164,9 +212,29 @@ export async function runTurn(args: {
   for (const q of qualityList) {
     if (q?.dim_id && q?.grade) grades[q.dim_id] = q.grade;
   }
-  if (Object.keys(grades).length === 0) {
+  if (Object.keys(grades).length === 0 && judgeRes.output.path_decision.type !== "narrative_advance") {
     // Fallback: record a single medium so downstream math doesn't blow up.
     grades["d1"] = "medium";
+  }
+
+  // narrative_advance light evidence row — written here (not by applyJudgeOutput
+  // since it short-circuits). Carries the option's cognitive_signal so admin
+  // analytics can see what the learner was leaning toward, but no grade.
+  if (judgeRes.output.path_decision.type === "narrative_advance") {
+    writeEvidence({
+      learner_id: args.learnerId,
+      ts: new Date().toISOString(),
+      challenge_id: preTurnPosition.challenge_id,
+      action_id: actionId,
+      turn_idx: preTurnPosition.turn_idx,
+      grades: {},
+      evidence: judgeRes.output.diagnosis?.evidence ?? "narrative_advance",
+      points_earned: 0,
+      complexity,
+      scaffold_strategy: null,
+      scaffold_assisted: null,
+      quotable: null,
+    });
   }
 
   // Scaffold audit: tag this evidence row with the strategy Judge chose and
@@ -346,6 +414,7 @@ export async function runTurn(args: {
       newlyDroppedArtifacts: newlyDroppedBriefs,
       sceneJournal,
       challengeCompanionHooks: activeCompanionHooks,
+      chosenNarrativePayoff: chosenNarrativePayoff || undefined,
       traceId,
       parentSpanId: judgeRes.callId,
     }),
@@ -498,6 +567,53 @@ export async function runTurn(args: {
       traceId,
     });
     for (const d of crossDrops) droppedThisTurn.push(conversationEntryToDropSummary(d));
+  }
+
+  // Scaffold ladder bookkeeping: count this turn against the current rung
+  // and escalate if the gate condition is met. Runs for BOTH narrative_advance
+  // (counter-based gate) and graded turns (mastery-based gate).
+  const bpForLadder = getBlueprint(snapshot.learner.blueprint_id);
+  const challengeForLadder = bpForLadder?.step3_script?.chapters
+    .find((c) => c.chapter_id === preTurnPosition.chapter_id)
+    ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
+  if (challengeForLadder?.scaffold_ladder && challengeForLadder.scaffold_ladder.length > 0) {
+    // Ensure the learner has a progress record (initialise on first contact).
+    getOrInitLadderProgress(args.learnerId, challengeForLadder);
+    // narrative_advance increments the per-rung counter; graded turns leave
+    // the counter alone (their gate is mastery-based).
+    let progress = judgeRes.output.path_decision.type === "narrative_advance"
+      ? incrementLadderAdvances(args.learnerId, preTurnPosition.challenge_id)
+      : (getLearnerState(args.learnerId)?.ladder_progress ?? {})[preTurnPosition.challenge_id] ?? null;
+    if (progress) {
+      const currentRung = challengeForLadder.scaffold_ladder[progress.position];
+      const stateNow = getLearnerState(args.learnerId);
+      const masteryNow = stateNow?.action_mastery?.[progress.action_id] ?? undefined;
+      if (currentRung && shouldEscalateLadder(currentRung, progress, masteryNow)) {
+        const escalated = escalateLadderPosition(args.learnerId, preTurnPosition.challenge_id);
+        if (escalated && challengeForLadder.scaffold_ladder[escalated.position]) {
+          // Optional: surface a system bubble announcing the handoff. Keep it
+          // discreet so the experience stays continuous.
+          appendConversation({
+            learner_id: args.learnerId,
+            turn_idx: preTurnPosition.turn_idx,
+            chapter_id: preTurnPosition.chapter_id,
+            challenge_id: preTurnPosition.challenge_id,
+            role: "system",
+            who: "ladder",
+            text: `这一步交给你独立完成。`,
+            trace_id: traceId,
+            meta: {
+              kind: "ladder_escalation",
+              from_position: progress.position,
+              to_position: escalated.position,
+              new_frame_id:
+                challengeForLadder.scaffold_ladder[escalated.position].frame_id,
+            },
+          });
+          progress = escalated;
+        }
+      }
+    }
   }
 
   // Upgrade-path recompute: derives each unlocked companion's level from

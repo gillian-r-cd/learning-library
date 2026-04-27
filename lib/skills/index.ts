@@ -297,6 +297,11 @@ function normalizeSkill3FilledChapter(
         action_prompts: [],
         expected_signals: [],
       };
+      const filledLadder = (filled as unknown as { scaffold_ladder?: unknown })
+        .scaffold_ladder;
+      const filledDefaultPos = (
+        filled as unknown as { default_ladder_position?: unknown }
+      ).default_ladder_position;
       const base = {
         challenge_id: skCh.challenge_id,
         title: filled.title ?? skCh.title,
@@ -313,6 +318,11 @@ function normalizeSkill3FilledChapter(
         default_response_frame_id:
           (filled as unknown as { default_response_frame_id?: string }).default_response_frame_id ??
           skCh.default_response_frame_id,
+        scaffold_ladder: Array.isArray(filledLadder)
+          ? (filledLadder as import("@/lib/types/core").ScaffoldLadderRung[])
+          : undefined,
+        default_ladder_position:
+          typeof filledDefaultPos === "number" ? filledDefaultPos : undefined,
       };
       return normalizeChallengeResponseFrames(
         normalizeChallengeArtifacts(base as import("@/lib/types/core").Challenge)

@@ -351,6 +351,10 @@ export interface NarratorArgs {
    *  Narrator reads them as background so it can leave a natural hook for
    *  the companion to pick up ("你听见 Elena 想提醒你…"). */
   challengeCompanionHooks?: ActiveCompanionHook[];
+  /** Only set when judgeOutput.path_decision.type === "narrative_advance".
+   *  Carries the narrative_payoff string for the option the learner picked
+   *  via a narrative_choice frame; narrator must extend it into a full beat. */
+  chosenNarrativePayoff?: string;
   traceId: string;
   parentSpanId?: string;
 }
@@ -499,6 +503,7 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
       scaffold_notes:
         args.judgeOutput.path_decision?.scaffold_spec?.notes ?? "",
       narrator_directive: args.judgeOutput.narrator_directive ?? "",
+      chosen_narrative_payoff: args.chosenNarrativePayoff ?? "",
       signals_hit_so_far: signalsHit,
       learner_total_turns: totalLearnerTurns,
       challenge_turn_idx: args.snapshot.learner.position.turn_idx,

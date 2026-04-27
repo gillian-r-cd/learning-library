@@ -776,11 +776,40 @@ companion_type 可选：npc_guide / npc_traveler / npc_competitor / npc_adversar
 保留 skeleton 中的 chapter_id / challenge_id / binds_actions / complexity 不变。
 
 ## response_frames（学员回复框架）硬要求
-- 每个 challenge 必须输出 response_frames，并至少包含 1 个 kind=free_text 的自然语言回复框架；可额外提供 0-2 个结构化框架。
-- response_frames 是数据结构，不是界面：只能使用 kind={free_text,single_choice,multi_choice,form}，field.type 只能使用 {text,textarea,radio,checkboxes,chips}。
-- 当任务需要学员拆分判断、做选择或填写表格时，优先提供 form / single_choice / multi_choice，降低输入负担。
-- default_response_frame_id 指向默认使用的 frame。通常第一轮用 free_text；如果 setup 明确要求拆分填写，可默认用 form。
+- 每个 challenge 必须输出 response_frames。**每个核心动作首次出现的 challenge 必须同时提供三类 frames**：1 个 kind=narrative_choice、1 个 kind=form、1 个 kind=free_text。已经在前置章节练习过的核心动作可以省略 narrative_choice 或 form，但 free_text 是基线，必须保留。
+- response_frames 是数据结构，不是界面：允许的 kind 包括 free_text / narrative_choice / single_choice / multi_choice / form；field.type 只能使用 {text, textarea, radio, checkboxes, chips}。
 - 字段要稳定、少而精：每个 form 2-5 个 fields；每个 required 字段都要确实服务于 expected_signals。
+- **default_response_frame_id 不再固定指向 free_text**。当本 challenge 包含 scaffold_ladder 时，default_response_frame_id 必须指向 ladder 起点对应的 frame_id（通常是 narrative_choice）。
+
+### narrative_choice frame 的结构约束
+- 仅含 1 个 field：`field_id="choice"`、`type="radio"`、`required=true`。
+- options 数量必须为 2 或 3。**禁止**给出 4 个及以上选项（会失去"小说式立场选择"的体感）。
+- 每个 option 必须包含：
+    - `value`：短机器标识（如 "stand_with_lin"、"raise_quality_concern"）。
+    - `label`：学员可见的按钮文案（10-25 字，平白业务体；不要写成完整句末加问号）。
+    - `narrative_payoff`：≥30 字的剧情段落，描述学员选了此项之后**剧情如何继续**（包含具体人物动作、环境细节、对话片段等）。narrator 在下一轮 narrative_beat 模式中将以此为内容承接点。
+    - `cognitive_signal`：`{ action_id, tag }`。`action_id` 与本 challenge 的 binds_actions[0] 保持一致；`tag` 是一个 12 字以内的中文短语，描述本选项反映的认知倾向（例："偏向能力解读"、"偏向意愿解读"、"先求背景信息"）。Judge 会把此 tag 作为 weight=light 的 evidence 写入，不计入 grade。
+- options 之间必须代表**对同一情境的不同立场或解读路径**，而不是"对错二选一"。学员选错也不会扣分，也不应触发 retry。
+- narrative_choice 的 prompt 字段是给学员的一句导语，**不允许写成开放问句**（不写"你怎么看？""你打算怎么做？"），允许的写法包括"你的判断是"、"你想从哪里入手"、"你打算先看哪一面"。
+- 与之配套的 narrative 段落（narrator 在该 frame 激活时输出的旁白）必须以**话题钩子**收尾，让 options 读起来像"对该钩子的不同立场"。具体钩子形态见 narrator.template 第 4.5 节。
+
+## scaffold_ladder（前置渐进式支架）硬要求
+- 每个核心动作首次出现的 challenge 必须输出 scaffold_ladder，至少 3 档：
+    1. position=0：kind=narrative_choice
+    2. position=1：kind=form
+    3. position=2：kind=free_text
+- 已经在前置章节练习过的核心动作可以从更高位起步，但同一 challenge 不得跳档（不允许只有 narrative_choice + free_text 两档）。
+- 每个 rung 必须包含：
+    - `position`：从 0 开始的整数。
+    - `kind`：narrative_choice / form / free_text。
+    - `frame_id`：必须与本 challenge 的 response_frames 中某一 frame 完全匹配，且 frame.kind 必须等于 rung.kind。
+    - `narrative_purpose`：一句 20-50 字的设计师备注，说明这一档的剧情功能。学员看不到。
+    - `gate_to_next`：升档条件。允许的形式：
+        - `{ "type": "after_n_advances", "n": <1-3> }`：narrative_choice rung 必须用此形式。
+        - `{ "type": "after_action_mastery_at_least", "threshold": <1-3> }`：form rung 通常用此形式。
+        - 末档 rung 的 gate_to_next 必须为 null。
+- default_ladder_position 默认为 0；只有当某 core_action 已在前置章节充分练习过时，可以设为 1 或 2。
+- ladder 中所有 frame_id 必须互不相同；同一 challenge 内同一档位不得重复。
 
 ## artifacts（道具）硬要求
 - 场景中 setup 或 narrative_premise 提到的关键物件（周报、简历、邮件、档案、KPI 报表、清单、组织图、对话截图等）必须做成 artifact，让学员可以翻阅，而不是只靠想象。
@@ -923,34 +952,59 @@ companion_type 可选：npc_guide / npc_traveler / npc_competitor / npc_adversar
           ],
           "response_frames": [
             {
-              "frame_id": "rf_free_text",
+              "frame_id": "rf_c1ch1_narrative",
               "version": 1,
-              "kind": "free_text",
-              "title": "自由回应",
-              "prompt": "用你自己的话说一说，你观察到了什么信号，以及你的判断和依据。",
-              "submit_label": "发送",
+              "kind": "narrative_choice",
+              "title": "你的初步判断",
+              "prompt": "你的判断是",
+              "submit_label": "做出选择",
               "binds_actions": [
                 "a1"
               ],
               "fields": [
                 {
-                  "field_id": "text",
-                  "type": "textarea",
-                  "label": "你的回复",
+                  "field_id": "choice",
+                  "type": "radio",
+                  "label": "你的初步判断",
                   "required": true,
-                  "validation": {
-                    "min_length": 1,
-                    "max_length": 2000
-                  }
+                  "options": [
+                    {
+                      "value": "lean_ability",
+                      "label": "她在跟进现有客户上能力到位",
+                      "narrative_payoff": "你顺着她的清单往下看，每一个客户的进度都被她处理得稳妥。这种稳妥没有花哨的辞藻，只有清晰的下一步动作。她合上笔记本时，目光在你的工牌上多停留了半秒。",
+                      "cognitive_signal": {
+                        "action_id": "a1",
+                        "tag": "偏向能力解读"
+                      }
+                    },
+                    {
+                      "value": "lean_willingness",
+                      "label": "她对接下来的协作还在观望",
+                      "narrative_payoff": "你注意到她合上笔记本时停顿了一下，整场会议没有再开口。这种安静不是没有想法的安静，更像是一种在等待表态的安静。她似乎想看清你这位新来的 leader 会不会兑现。",
+                      "cognitive_signal": {
+                        "action_id": "a1",
+                        "tag": "偏向意愿解读"
+                      }
+                    },
+                    {
+                      "value": "need_more_context",
+                      "label": "信息还不够，先再观察一阵",
+                      "narrative_payoff": "你决定不急着下判断。你打开下周的工作清单，把和她共同跟进的两个项目排到日程前面，准备在更长一点的接触中观察她对不同任务的反应。",
+                      "cognitive_signal": {
+                        "action_id": "a1",
+                        "tag": "先求背景信息"
+                      }
+                    }
+                  ]
                 }
               ]
             },
             {
-              "frame_id": "rf_readiness_form",
+              "frame_id": "rf_c1ch1_form",
               "version": 1,
               "kind": "form",
               "title": "准备度诊断表",
-              "prompt": "把能力、意愿和证据分开填写。",
+              "prompt": "把能力侧、意愿侧和支撑证据分别填写出来。",
               "helper_text": "先不用写完整方案，先把判断依据理清楚。",
               "submit_label": "提交诊断",
               "binds_actions": [
@@ -974,18 +1028,9 @@ companion_type 可选：npc_guide / npc_traveler / npc_competitor / npc_adversar
                   "label": "能力水平",
                   "required": true,
                   "options": [
-                    {
-                      "value": "low",
-                      "label": "低"
-                    },
-                    {
-                      "value": "medium",
-                      "label": "中"
-                    },
-                    {
-                      "value": "high",
-                      "label": "高"
-                    }
+                    { "value": "low", "label": "低" },
+                    { "value": "medium", "label": "中" },
+                    { "value": "high", "label": "高" }
                   ]
                 },
                 {
@@ -994,18 +1039,9 @@ companion_type 可选：npc_guide / npc_traveler / npc_competitor / npc_adversar
                   "label": "意愿水平",
                   "required": true,
                   "options": [
-                    {
-                      "value": "low",
-                      "label": "低"
-                    },
-                    {
-                      "value": "medium",
-                      "label": "中"
-                    },
-                    {
-                      "value": "high",
-                      "label": "高"
-                    }
+                    { "value": "low", "label": "低" },
+                    { "value": "medium", "label": "中" },
+                    { "value": "high", "label": "高" }
                   ]
                 },
                 {
@@ -1015,9 +1051,56 @@ companion_type 可选：npc_guide / npc_traveler / npc_competitor / npc_adversar
                   "required": true
                 }
               ]
+            },
+            {
+              "frame_id": "rf_c1ch1_free",
+              "version": 1,
+              "kind": "free_text",
+              "title": "自由回应",
+              "prompt": "用你自己的话说明你观察到了什么、判断是什么、以及你依据的具体证据。",
+              "submit_label": "发送",
+              "binds_actions": [
+                "a1"
+              ],
+              "fields": [
+                {
+                  "field_id": "text",
+                  "type": "textarea",
+                  "label": "你的回复",
+                  "required": true,
+                  "validation": {
+                    "min_length": 30,
+                    "max_length": 2000
+                  }
+                }
+              ]
             }
           ],
-          "default_response_frame_id": "rf_free_text"
+          "scaffold_ladder": [
+            {
+              "position": 0,
+              "kind": "narrative_choice",
+              "frame_id": "rf_c1ch1_narrative",
+              "narrative_purpose": "在学员第一次接触'判断准备度'这个动作时，先让她以最小动作进入剧情，建立对'同一行为可有多种解读'的初步意识",
+              "gate_to_next": { "type": "after_n_advances", "n": 1 }
+            },
+            {
+              "position": 1,
+              "kind": "form",
+              "frame_id": "rf_c1ch1_form",
+              "narrative_purpose": "学员在已经看过一次解读分歧之后，开始独立把能力侧与意愿侧分别落到证据上",
+              "gate_to_next": { "type": "after_action_mastery_at_least", "threshold": 1 }
+            },
+            {
+              "position": 2,
+              "kind": "free_text",
+              "frame_id": "rf_c1ch1_free",
+              "narrative_purpose": "学员独立写一段对该下属在该任务上的完整判断与依据",
+              "gate_to_next": null
+            }
+          ],
+          "default_response_frame_id": "rf_c1ch1_narrative",
+          "default_ladder_position": 0
         }
       ]
     }
@@ -1746,6 +1829,15 @@ PendingArtifacts（当前挑战未掉落）: {{pending_artifacts}}
 - Judge 写"判断成立"，你写"成立"或"经得起推敲"，**不写**"站得住、撑得住"。
 - 把 directive 当语义目标接力，不做文学加工。
 
+**框架代码不外显（最高优先级，违反即失败）**：
+学员可见的输出**禁止**出现以下任何一种框架内部代码：
+- 准备度档位代码：R1 / R2 / R3 / R4。即使 Judge 在 directive 中写"R3 这一档"，narrator 也必须改写为业务化描述（例："能力高意愿不稳的状态""能力到位但意愿尚未完全打开"）。
+- 领导风格代码：S1 / S2 / S3 / S4。改写为同义业务表达（例："边给方向边听反馈""明确指令""授权式"）。
+- 评分维度代码：dim_id（d1 / d2 / d3）。改写为对应维度的中文名（例："信息采集深度""判断准确性"）或干脆隐去。
+- "落到 R 档 / 落到 S 档 / 落到哪一档"这类带"落到 + 代码"的固定表达：禁止使用。
+- "档"作为评分维度名时也尽量避免（"这一档"可改为"这种状态"或"这种状态分级"）。
+narrator 的产出是给学员读的。框架代码只是 Judge 内部用的术语，学员看到这些字符就会被打断沉浸。**即使 directive 引用了 R/S/d 代码，narrator 输出中也必须改写**。
+
 **指代与具体性**：
 - 每个"他、她、这、那"必须能从上下文唯一指向一个对象。代词紧跟其指代对象出现。
 - 提到下属、客户、同事必须带身份（"林涛，你的工程负责人"），不要只说"他"。
@@ -1868,6 +1960,21 @@ PendingArtifacts（当前挑战未掉落）: {{pending_artifacts}}
 - 必须直接给出一段参考答案或可接受答案。答案要贴合当前 challenge_setup、rubric 和 expected_signals。
 - 必须用 1-2 句解释这个答案为什么成立，解释要引用具体线索或道具事实。
 - 末句只能做承接，告诉学员这道题到这里收束，下一步换到新情境继续练。严禁再提问。
+
+## NARRATIVE_BEAT 模式产出规则（仅当 judge_path_decision.type = narrative_advance 时激活）
+本轮学员通过 narrative_choice frame 做出了一次轻量选择，runtime 提供变量 `chosen_narrative_payoff`（学员所选 option 的剧情承接段）。你的任务是把这段 payoff 扩写为完整的场景叙述，并在结尾抛出**话题钩子**，承接下一组候选立场。
+
+**输出规则**：
+- 长度 60-180 字。
+- 前半段：把 `chosen_narrative_payoff` 扩写为有人物、动作、时间或环境细节的具体场景。可以引用已登场的人物姓名（按人物白名单），可以引用已掉落道具的事实。**不要**简单重复 payoff 原文。
+- 末句必须是**话题钩子**，让学员自然地从下方 narrative_choice 选项中挑一个立场。允许的钩子形态：
+    - 未完成的对话：写出对方刚说完的一句话或一个停顿，让学员有立场可表态。
+    - 可被解读的具体细节：把一个具体动作或物件摆出来，让学员从下方选项中选解读。
+    - 一个待表态的瞬间：写到对方等学员的一句话，但不写学员的反应。
+- **末句严禁是开放问句**（不写"你打算怎么开口跟她说？""哪一类用户会受到影响？请举出例子"等）。学员看到下方按钮就知道要做什么，**不要**写"请选择"、"请点击下方任一选项"等提示语。
+- 不复读 narrator_directive（本路径下 directive 通常为空或简短）。
+- 不引入 rubric 评分视角，不写"你抓到了…""你的判断是否成立"等评分语言。这一轮**学员没有被评分**，narrator 也不应在文字上暗示评分结果。
+- 严格遵守上方所有人物白名单与文风规则。
 ```
 
 ### User Message Template
@@ -1914,6 +2021,8 @@ Judge path_decision：{{judge_path_decision}}
 Scaffold 策略（仅当 path ∈ {scaffold, simplify_challenge} 时非空；此时你必须执行 SCAFFOLD 模式产出规则下对应那一条）：{{scaffold_strategy}}
 Scaffold 备注（Judge 可能在 scaffold_spec.notes 里写本轮要特别突出的点）：{{scaffold_notes}}
 Judge narrator_directive（语义目标，不是要抄的文字）：{{narrator_directive}}
+
+学员所选 narrative payoff（仅当 path_decision.type = narrative_advance 时非空；这是学员通过 narrative_choice 按钮选中的剧情承接段，由设计师预先写好；此时你必须执行 NARRATIVE_BEAT 模式产出规则）：{{chosen_narrative_payoff}}
 
 本挑战累计命中信号（hit=true 已命中；其余是 Narrator 未来要引导的靶子）：{{signals_hit_so_far}}
 

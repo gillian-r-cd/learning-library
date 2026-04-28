@@ -47,6 +47,33 @@ export interface SignatureMove {
   tier_thresholds?: number[];
 }
 
+/** Domain framework concept that a core_action depends on (e.g. R1-R4
+ *  readiness levels for situational leadership). Declared at design time so
+ *  that runtime can ensure: (a) the concept gets introduced via an artifact
+ *  or narrator beat BEFORE any challenge requires it; (b) frame options /
+ *  ladder rungs can show the concept's plain-language descriptions without
+ *  exposing internal codes to learners. */
+export interface FrameworkConcept {
+  /** Stable id used across rubric / signature_moves / ladder.required_concepts. */
+  concept_id: string;
+  /** Short human name (例: "下属准备度的四种组合"). */
+  name: string;
+  /** One-paragraph plain-language description (no internal codes) used by
+   *  artifacts and option labels. */
+  plain_description: string;
+  /** Optional categorical levels — each carries a learner-visible label and
+   *  a one-line guidance. Used by Skill 3 Fill to populate single_choice
+   *  rung options and concept_card artifact content. */
+  levels?: Array<{
+    /** Internal id (R1, S2, etc.). NOT shown to learners. */
+    code: string;
+    /** Plain-language label ("能力低、意愿高"). Shown to learners. */
+    label: string;
+    /** One-line guidance ("适合给具体步骤、同时保护积极性"). Optional. */
+    guidance?: string;
+  }>;
+}
+
 export interface CoreAction {
   action_id: string;
   name: string;
@@ -56,6 +83,10 @@ export interface CoreAction {
   quality_matrix: QualityMatrix;
   /** Signature moves registered under this action. Empty for old blueprints. */
   signature_moves?: SignatureMove[];
+  /** Framework concepts (categorical schemes, scales, taxonomies) this
+   *  action's rubric / signature_moves depend on. Declared at Skill 1 so
+   *  Skill 3 can route concept introduction. Optional for backward compat. */
+  framework_concepts?: FrameworkConcept[];
 }
 
 export interface Step1Gamecore {
@@ -215,13 +246,24 @@ export interface ScaffoldLadderRung {
   position: number;
   /** Mirrors the referenced frame's kind; set redundantly so runtime/judge can
    *  branch without a frame lookup. */
-  kind: "narrative_choice" | "form" | "free_text";
+  kind: "narrative_choice" | "form" | "free_text" | "single_choice" | "multi_choice";
   /** Must match an entry in challenge.response_frames. */
   frame_id: string;
   /** Why this rung exists (Skill 3 Fill rationale; not shown to learner). */
   narrative_purpose: string;
   /** Condition for the runtime to escalate to position+1. `null` = terminal. */
   gate_to_next: ScaffoldLadderGate;
+  /** The concrete question narrator must end the turn with when this rung is
+   *  active. Optional for backward compat with v1 ladders. When present,
+   *  narrator must produce a semantic variant (preserving question type +
+   *  referent; only paraphrase for stylistic flow). */
+  rung_question?: string;
+  /** What learner must demonstrate at this rung (designer-side; not shown). */
+  rung_expected_output?: string;
+  /** Framework concept ids that must already be introduced (via artifact /
+   *  earlier rung / earlier challenge) for this rung to be valid. Runtime
+   *  uses this to validate concept ordering at design time. */
+  required_concepts?: string[];
 }
 
 export interface Challenge {
@@ -431,6 +473,10 @@ export interface Chapter {
   /** Link to one ArcStage.id in journey_meta.arc_stages. Old blueprints
    *  may omit this; runtime degrades gracefully. */
   arc_stage_id?: string;
+  /** Framework concept ids this chapter teaches/introduces. A concept may
+   *  only be referenced in a challenge if it appears here or in an earlier
+   *  chapter's introduces_concepts. Optional for backward compat. */
+  introduces_concepts?: string[];
 }
 
 export interface Step3Script {

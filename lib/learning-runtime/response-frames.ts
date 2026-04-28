@@ -115,10 +115,14 @@ export function normalizeScaffoldLadder(
     if (!frame) continue;
     const declaredKind = raw.kind;
     const inferredKind: ScaffoldLadderRung["kind"] | null =
-      frame.kind === "narrative_choice" || frame.kind === "form" || frame.kind === "free_text"
+      frame.kind === "narrative_choice" ||
+      frame.kind === "form" ||
+      frame.kind === "free_text" ||
+      frame.kind === "single_choice" ||
+      frame.kind === "multi_choice"
         ? frame.kind
         : null;
-    if (!inferredKind) continue; // rung must point to one of the supported kinds
+    if (!inferredKind) continue; // rung must point to a supported kind
     if (declaredKind && declaredKind !== inferredKind) continue; // mismatch
     valid.push({
       position: valid.length, // renumber sequentially
@@ -126,6 +130,15 @@ export function normalizeScaffoldLadder(
       frame_id: raw.frame_id,
       narrative_purpose: String(raw.narrative_purpose ?? "").trim(),
       gate_to_next: normalizeLadderGate(raw.gate_to_next, valid.length === rawLadder.length - 1),
+      ...(typeof raw.rung_question === "string" && raw.rung_question.trim()
+        ? { rung_question: raw.rung_question.trim() }
+        : {}),
+      ...(typeof raw.rung_expected_output === "string" && raw.rung_expected_output.trim()
+        ? { rung_expected_output: raw.rung_expected_output.trim() }
+        : {}),
+      ...(Array.isArray(raw.required_concepts) && raw.required_concepts.length > 0
+        ? { required_concepts: raw.required_concepts.filter((c): c is string => typeof c === "string") }
+        : {}),
     });
   }
   if (valid.length === 0) return { ladder: null, defaultPosition: null };

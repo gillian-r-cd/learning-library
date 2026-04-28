@@ -83,6 +83,60 @@ export default function ResponseFrameRenderer({
 
   const isFreeText = frame.kind === "free_text";
   const isNarrativeChoice = frame.kind === "narrative_choice";
+  const isSingleChoice = frame.kind === "single_choice";
+
+  // single_choice: each option is a stacked clickable card (label on top,
+  // optional description below). Click = submit. No expand/collapse.
+  if (isSingleChoice) {
+    const choiceField = frame.fields[0];
+    const options = choiceField?.options ?? [];
+    return (
+      <div
+        className="border-t border-border/80 p-4 space-y-3 bg-white/90 backdrop-blur shadow-[0_-10px_30px_rgba(68,54,34,0.06)]"
+        data-test-id="response-frame"
+      >
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="chip !border-accent/20 !bg-accent-soft !text-accent">归类</span>
+            <div className="font-semibold text-sm truncate">{frame.title}</div>
+          </div>
+          {frame.helper_text && (
+            <div className="text-xs text-accent rounded-md bg-accent-soft/50 border border-accent/20 px-2 py-1">
+              {frame.helper_text}
+            </div>
+          )}
+          {frame.prompt && <div className="text-xs text-muted">{frame.prompt}</div>}
+        </div>
+        <div className="flex flex-col gap-2">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className="card-sub w-full text-left transition hover:border-accent/40 hover:bg-accent-soft disabled:opacity-50"
+              onClick={() => {
+                if (busy) return;
+                onSubmit(
+                  {
+                    frame_id: frame.frame_id,
+                    frame_version: frame.version,
+                    values: { [choiceField?.field_id ?? "choice"]: opt.value },
+                  },
+                  opt.label
+                );
+              }}
+              disabled={busy}
+              data-test-id={`single-choice-option-${opt.value}`}
+            >
+              <div className="font-semibold text-sm">{opt.label}</div>
+              {opt.description && (
+                <div className="text-xs text-muted mt-1">{opt.description}</div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // narrative_choice gets its own minimal renderer: the learner sees the
   // 2-3 option buttons as the input region, no expand/collapse, no separate
@@ -206,7 +260,7 @@ export default function ResponseFrameRenderer({
       className="border-t border-border/80 p-4 space-y-3 bg-white/90 backdrop-blur shadow-[0_-10px_30px_rgba(68,54,34,0.06)]"
       data-test-id="response-frame"
     >
-      <div className="space-y-1">
+      <div className="space-y-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="chip !border-accent/20 !bg-accent-soft !text-accent">
             {isFreeText ? "自由作答" : "任务卡"}
@@ -223,8 +277,17 @@ export default function ResponseFrameRenderer({
             </button>
           )}
         </div>
-        <div className="text-xs text-muted">{frame.prompt}</div>
-        {frame.helper_text && <div className="text-xs text-accent">{frame.helper_text}</div>}
+        {/* helper_text is rendered as a subtle anchor strip first, so the learner
+            knows exactly which subject they are evaluating in this form. */}
+        {frame.helper_text && (
+          <div
+            className="text-xs text-accent rounded-md bg-accent-soft/50 border border-accent/20 px-2 py-1"
+            data-test-id="response-frame-helper"
+          >
+            {frame.helper_text}
+          </div>
+        )}
+        {frame.prompt && <div className="text-xs text-muted">{frame.prompt}</div>}
       </div>
 
       <div className={isFreeText ? "flex gap-2" : "space-y-3 max-h-[42vh] overflow-y-auto pr-1"}>

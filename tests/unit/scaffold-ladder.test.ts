@@ -149,6 +149,69 @@ describe("scaffold ladder normalisation", () => {
     expect(result.ladder?.[0].frame_id).toBe("rf_form");
   });
 
+  it("accepts single_choice rung kind and carries rung_question / required_concepts", () => {
+    const ladder: ScaffoldLadderRung[] = [
+      {
+        position: 0,
+        kind: "single_choice",
+        frame_id: "rf_archetype",
+        narrative_purpose: "classify into 4 archetypes",
+        gate_to_next: { type: "after_action_mastery_at_least", threshold: 1 },
+        rung_question: "请在下面四种状态里选一个最贴近你判断的。",
+        rung_expected_output: "学员能把能力/意愿组合对应到一档",
+        required_concepts: ["readiness_levels"],
+      },
+      {
+        position: 1,
+        kind: "free_text",
+        frame_id: "rf_free",
+        narrative_purpose: "synthesise",
+        gate_to_next: null,
+      },
+    ];
+    const frames: ResponseFrame[] = [
+      {
+        frame_id: "rf_archetype",
+        version: 1,
+        kind: "single_choice",
+        title: "归类",
+        prompt: "选一个",
+        binds_actions: ["a1"],
+        fields: [
+          {
+            field_id: "archetype",
+            type: "radio",
+            label: "组合",
+            required: true,
+            options: [
+              { value: "R1", label: "能力低、意愿低" },
+              { value: "R2", label: "能力低、意愿高" },
+            ],
+          },
+        ],
+      },
+      {
+        frame_id: "rf_free",
+        version: 1,
+        kind: "free_text",
+        title: "free",
+        prompt: "x",
+        binds_actions: ["a1"],
+        fields: [{ field_id: "text", type: "textarea", label: "x", required: true }],
+      },
+    ];
+    const result = normalizeScaffoldLadder(ladder, 0, frames);
+    expect(result.ladder?.length).toBe(2);
+    expect(result.ladder?.[0].kind).toBe("single_choice");
+    expect(result.ladder?.[0].rung_question).toBe(
+      "请在下面四种状态里选一个最贴近你判断的。"
+    );
+    expect(result.ladder?.[0].required_concepts).toEqual(["readiness_levels"]);
+    expect(result.ladder?.[0].rung_expected_output).toBe(
+      "学员能把能力/意愿组合对应到一档"
+    );
+  });
+
   it("returns null when no rung is valid", () => {
     const ladder: ScaffoldLadderRung[] = [
       {

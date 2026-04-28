@@ -355,6 +355,12 @@ export interface NarratorArgs {
    *  Carries the narrative_payoff string for the option the learner picked
    *  via a narrative_choice frame; narrator must extend it into a full beat. */
   chosenNarrativePayoff?: string;
+  /** Currently active scaffold ladder rung. When present, narrator must
+   *  enforce the rung_question contract — its output last sentence must be a
+   *  semantic variant of rungQuestion, and question type must match rungKind. */
+  rungQuestion?: string;
+  rungExpectedOutput?: string;
+  rungKind?: string;
   traceId: string;
   parentSpanId?: string;
 }
@@ -504,6 +510,9 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
         args.judgeOutput.path_decision?.scaffold_spec?.notes ?? "",
       narrator_directive: args.judgeOutput.narrator_directive ?? "",
       chosen_narrative_payoff: args.chosenNarrativePayoff ?? "",
+      rung_question: args.rungQuestion ?? "",
+      rung_expected_output: args.rungExpectedOutput ?? "",
+      rung_kind: args.rungKind ?? "",
       signals_hit_so_far: signalsHit,
       learner_total_turns: totalLearnerTurns,
       challenge_turn_idx: args.snapshot.learner.position.turn_idx,

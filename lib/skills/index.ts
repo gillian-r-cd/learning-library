@@ -179,6 +179,41 @@ export async function runSkill3Fill(
       title: pc.title,
       narrative_premise: pc.narrative_premise ?? "",
     }));
+    // Phase C: surface framework_concepts to Skill 3 Fill so it can decide
+    // whether each challenge needs a 4-rung ladder + concept_card artifact.
+    // chapter_introduces_concepts is the chapter-level concept introduction list
+    // from skeleton.introduces_concepts (filtered to those declared on actions).
+    // framework_concepts_for_actions is keyed by action_id and contains the
+    // full concept definitions (with levels) for use in single_choice options.
+    const conceptsByAction: Record<string, import("@/lib/types/core").FrameworkConcept[]> = {};
+    if (bp.step1_gamecore?.core_actions) {
+      for (const a of bp.step1_gamecore.core_actions) {
+        if (Array.isArray(a.framework_concepts) && a.framework_concepts.length > 0) {
+          conceptsByAction[a.action_id] = a.framework_concepts;
+        }
+      }
+    }
+    // Concepts this chapter intends to introduce, expanded with full data.
+    const introducesConceptsRaw = (chap as unknown as { introduces_concepts?: unknown })
+      .introduces_concepts;
+    const chapterIntroducesConcepts: import("@/lib/types/core").FrameworkConcept[] = [];
+    if (Array.isArray(introducesConceptsRaw)) {
+      const wantIds = new Set(
+        introducesConceptsRaw.filter((s): s is string => typeof s === "string")
+      );
+      for (const concepts of Object.values(conceptsByAction)) {
+        for (const c of concepts) {
+          if (wantIds.has(c.concept_id)) chapterIntroducesConcepts.push(c);
+        }
+      }
+    }
+    // Per-action concept slim view (passed alongside chapter; lets Skill 3
+    // Fill see at a glance which challenges in this chapter need 4-rung ladders).
+    const frameworkConceptsForActions: Record<string, import("@/lib/types/core").FrameworkConcept[]> = {};
+    for (const skCh of chap.challenges) {
+      const a0 = skCh.binds_actions?.[0];
+      if (a0 && conceptsByAction[a0]) frameworkConceptsForActions[a0] = conceptsByAction[a0];
+    }
     const { result: res, chapter: filledChapter } = await llmCallWithValidationRetry(
       () =>
         llmCall({
@@ -191,6 +226,8 @@ export async function runSkill3Fill(
               chapter: chap,
               current_arc_stage: currentArcStage,
               prior_chapters: priorChapters,
+              chapter_introduces_concepts: chapterIntroducesConcepts,
+              framework_concepts_for_actions: frameworkConceptsForActions,
             },
           },
         }),
@@ -281,6 +318,19 @@ function normalizeSkill3FilledChapter(
     );
   }
 
+  // introduces_concepts: prefer the fill output's value, but fall back to the
+  // skeleton chapter's value (which the LLM declared at skeleton stage). This
+  // prevents the chapter from losing its concept-introduction marker simply
+  // because the fill prompt didn't explicitly re-emit it.
+  const fillIntroducesConcepts = (one as unknown as { introduces_concepts?: unknown })
+    .introduces_concepts;
+  const skeletonIntroducesConcepts = (chap as unknown as { introduces_concepts?: unknown })
+    .introduces_concepts;
+  const introducesConcepts = Array.isArray(fillIntroducesConcepts)
+    ? fillIntroducesConcepts
+    : Array.isArray(skeletonIntroducesConcepts)
+    ? skeletonIntroducesConcepts
+    : null;
   return {
     chapter_id: chap.chapter_id,
     title: one.title ?? chap.title,
@@ -290,6 +340,13 @@ function normalizeSkill3FilledChapter(
       summary: chap.milestone_summary ?? "",
     },
     arc_stage_id: chap.arc_stage_id,
+    ...(Array.isArray(introducesConcepts) && introducesConcepts.length > 0
+      ? {
+          introduces_concepts: introducesConcepts.filter(
+            (c): c is string => typeof c === "string"
+          ),
+        }
+      : {}),
     challenges: chap.challenges.map((skCh) => {
       const filled = byId.get(skCh.challenge_id)!;
       const trunk = filled.trunk ?? {

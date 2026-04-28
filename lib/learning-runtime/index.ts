@@ -202,6 +202,37 @@ export async function runTurn(args: {
     });
   }
 
+  // 3b. Ladder gating on complete_challenge: if Judge wants to close the
+  // challenge but the learner hasn't reached the ladder's terminal rung yet,
+  // demote complete_challenge → advance so the ladder still gets to walk
+  // through its remaining rungs (e.g., single_choice classification before
+  // free_text synthesis). Without this, Judge tends to fire complete_challenge
+  // on the first good form submission, skipping the rest of the ladder.
+  if (judgeRes.output.path_decision.type === "complete_challenge") {
+    const stateForGate = getLearnerState(args.learnerId);
+    const challengeForGate = bpForHooks?.step3_script?.chapters
+      .find((c) => c.chapter_id === preTurnPosition.chapter_id)
+      ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
+    const ladderForGate = challengeForGate?.scaffold_ladder;
+    const progressForGate = stateForGate?.ladder_progress?.[preTurnPosition.challenge_id];
+    if (
+      ladderForGate &&
+      ladderForGate.length > 0 &&
+      progressForGate &&
+      progressForGate.position < ladderForGate.length - 1
+    ) {
+      // Convert to a regular advance; the ladder bookkeeping at the end of
+      // runTurn will then evaluate gate_to_next and possibly escalate.
+      judgeRes = {
+        ...judgeRes,
+        output: {
+          ...judgeRes.output,
+          path_decision: { ...judgeRes.output.path_decision, type: "advance" },
+        },
+      };
+    }
+  }
+
   // 4. Apply Judge → State Manager update (every access defensively chained).
   const actionId = snapshot.current_challenge?.binds_actions?.[0] ?? "a1";
   const complexity = snapshot.current_challenge?.complexity ?? "low";
@@ -295,7 +326,25 @@ export async function runTurn(args: {
     judgeRes.output.diagnosis?.missing_field_ids ?? [],
     snapshot.active_response_frame
   );
+  // Ladder is authoritative when present. Judge's next_response_frame
+  // selection should NOT skip ladder rungs. Allow Judge to override only
+  // when (a) the challenge has no ladder, or (b) Judge is doing scaffolding
+  // (path is scaffold / simplify_challenge / reveal_answer_and_advance) so it
+  // legitimately needs to fall back to a structured frame.
+  const _challengeForLadderCheck = bpForHooks?.step3_script?.chapters
+    .find((c) => c.chapter_id === preTurnPosition.chapter_id)
+    ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
+  const challengeHasLadder = !!(
+    _challengeForLadderCheck?.scaffold_ladder &&
+    _challengeForLadderCheck.scaffold_ladder.length > 0
+  );
+  const judgeIsScaffolding =
+    judgeRes.output.path_decision.type === "scaffold" ||
+    judgeRes.output.path_decision.type === "simplify_challenge" ||
+    judgeRes.output.path_decision.type === "reveal_answer_and_advance";
+  const allowJudgeFrameOverride = !challengeHasLadder || judgeIsScaffolding;
   if (
+    allowJudgeFrameOverride &&
     nextFrameSelection &&
     !applied.advancedToNewChallenge &&
     snapshot.response_frames.some((frame) => frame.frame_id === nextFrameSelection.frame_id)
@@ -305,6 +354,14 @@ export async function runTurn(args: {
       selection: nextFrameSelection,
     };
     saveLearnerState(applied.state);
+  } else if (challengeHasLadder && !judgeIsScaffolding) {
+    // Clear any stale Judge-driven selection so the ladder rung's frame wins
+    // on the next snapshot (resolveLadderAwareFrame ranks explicit selection
+    // first; we don't want Judge's "next_response_frame" to skip the rung).
+    if (applied.state.active_response_frame?.challenge_id === applied.state.position.challenge_id) {
+      applied.state.active_response_frame = null;
+      saveLearnerState(applied.state);
+    }
   }
 
   // 5a. Process AWARD_SIGNATURE_MOVE events (subjective ability tracking).
@@ -405,6 +462,60 @@ export async function runTurn(args: {
       })
     : null;
 
+  // Scaffold ladder bookkeeping must happen BEFORE the narrator call so that
+  // (a) the narrator sees the post-escalation rung's rung_question, and
+  // (b) the "这一步交给你独立完成" handoff bubble lands above narrator.
+  const bpForRung = bpForHooks; // alias, same blueprint
+  const challengeForRung = bpForRung?.step3_script?.chapters
+    .find((c) => c.chapter_id === preTurnPosition.chapter_id)
+    ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
+  if (challengeForRung?.scaffold_ladder && challengeForRung.scaffold_ladder.length > 0) {
+    getOrInitLadderProgress(args.learnerId, challengeForRung);
+    let progress =
+      judgeRes.output.path_decision.type === "narrative_advance"
+        ? incrementLadderAdvances(args.learnerId, preTurnPosition.challenge_id)
+        : (getLearnerState(args.learnerId)?.ladder_progress ?? {})[preTurnPosition.challenge_id] ??
+          null;
+    if (progress) {
+      const currentRungPre = challengeForRung.scaffold_ladder[progress.position];
+      const stateNow = getLearnerState(args.learnerId);
+      const masteryNow = stateNow?.action_mastery?.[progress.action_id] ?? undefined;
+      if (currentRungPre && shouldEscalateLadder(currentRungPre, progress, masteryNow)) {
+        const escalated = escalateLadderPosition(args.learnerId, preTurnPosition.challenge_id);
+        if (escalated && challengeForRung.scaffold_ladder[escalated.position]) {
+          appendConversation({
+            learner_id: args.learnerId,
+            turn_idx: preTurnPosition.turn_idx,
+            chapter_id: preTurnPosition.chapter_id,
+            challenge_id: preTurnPosition.challenge_id,
+            role: "system",
+            who: "ladder",
+            text: `这一步交给你独立完成。`,
+            trace_id: traceId,
+            meta: {
+              kind: "ladder_escalation",
+              from_position: progress.position,
+              to_position: escalated.position,
+              new_frame_id:
+                challengeForRung.scaffold_ladder[escalated.position].frame_id,
+            },
+          });
+          progress = escalated;
+        }
+      }
+    }
+  }
+
+  // Now (post-escalation) resolve the rung that the learner will see NEXT.
+  // narrator's rung_question is keyed off this rung, so its question matches
+  // the input control the learner is about to interact with.
+  const stateForRung = getLearnerState(args.learnerId);
+  const rungProgress = stateForRung?.ladder_progress?.[preTurnPosition.challenge_id] ?? null;
+  const currentRung =
+    challengeForRung?.scaffold_ladder && rungProgress
+      ? challengeForRung.scaffold_ladder[rungProgress.position] ?? null
+      : null;
+
   const [narrator, companionSpeeches] = await Promise.all([
     runNarrator({
       snapshot,
@@ -415,6 +526,9 @@ export async function runTurn(args: {
       sceneJournal,
       challengeCompanionHooks: activeCompanionHooks,
       chosenNarrativePayoff: chosenNarrativePayoff || undefined,
+      rungQuestion: currentRung?.rung_question || undefined,
+      rungExpectedOutput: currentRung?.rung_expected_output || undefined,
+      rungKind: currentRung?.kind || undefined,
       traceId,
       parentSpanId: judgeRes.callId,
     }),
@@ -569,52 +683,8 @@ export async function runTurn(args: {
     for (const d of crossDrops) droppedThisTurn.push(conversationEntryToDropSummary(d));
   }
 
-  // Scaffold ladder bookkeeping: count this turn against the current rung
-  // and escalate if the gate condition is met. Runs for BOTH narrative_advance
-  // (counter-based gate) and graded turns (mastery-based gate).
-  const bpForLadder = getBlueprint(snapshot.learner.blueprint_id);
-  const challengeForLadder = bpForLadder?.step3_script?.chapters
-    .find((c) => c.chapter_id === preTurnPosition.chapter_id)
-    ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
-  if (challengeForLadder?.scaffold_ladder && challengeForLadder.scaffold_ladder.length > 0) {
-    // Ensure the learner has a progress record (initialise on first contact).
-    getOrInitLadderProgress(args.learnerId, challengeForLadder);
-    // narrative_advance increments the per-rung counter; graded turns leave
-    // the counter alone (their gate is mastery-based).
-    let progress = judgeRes.output.path_decision.type === "narrative_advance"
-      ? incrementLadderAdvances(args.learnerId, preTurnPosition.challenge_id)
-      : (getLearnerState(args.learnerId)?.ladder_progress ?? {})[preTurnPosition.challenge_id] ?? null;
-    if (progress) {
-      const currentRung = challengeForLadder.scaffold_ladder[progress.position];
-      const stateNow = getLearnerState(args.learnerId);
-      const masteryNow = stateNow?.action_mastery?.[progress.action_id] ?? undefined;
-      if (currentRung && shouldEscalateLadder(currentRung, progress, masteryNow)) {
-        const escalated = escalateLadderPosition(args.learnerId, preTurnPosition.challenge_id);
-        if (escalated && challengeForLadder.scaffold_ladder[escalated.position]) {
-          // Optional: surface a system bubble announcing the handoff. Keep it
-          // discreet so the experience stays continuous.
-          appendConversation({
-            learner_id: args.learnerId,
-            turn_idx: preTurnPosition.turn_idx,
-            chapter_id: preTurnPosition.chapter_id,
-            challenge_id: preTurnPosition.challenge_id,
-            role: "system",
-            who: "ladder",
-            text: `这一步交给你独立完成。`,
-            trace_id: traceId,
-            meta: {
-              kind: "ladder_escalation",
-              from_position: progress.position,
-              to_position: escalated.position,
-              new_frame_id:
-                challengeForLadder.scaffold_ladder[escalated.position].frame_id,
-            },
-          });
-          progress = escalated;
-        }
-      }
-    }
-  }
+  // (Scaffold ladder bookkeeping was moved earlier — before narrator — so
+  // narrator could see the post-escalation rung. Don't duplicate it here.)
 
   // Upgrade-path recompute: derives each unlocked companion's level from
   // their cumulative speech count and writes a "✨ 升级" bubble when any

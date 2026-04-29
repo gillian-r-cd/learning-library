@@ -172,6 +172,7 @@ export async function runNarratorOpening(
     protagonistRole:
       bp.step3_script?.journey_meta?.protagonist_role ??
       `你是一名正在学习「${bp.topic ?? ""}」的实践者`,
+    journeyGoal: bp.step3_script?.journey_meta?.journey_goal ?? "",
     // All character names DECLARED in this blueprint — any name in text that's
     // blueprint-declared but NOT in the whitelist is an off-narrative reference.
     declaredCharacters: collectAllDeclaredCharacterNames(bp),
@@ -223,12 +224,16 @@ function validateOpeningOutput(
     artifactNames: string[];
     nameableCharacters: string[];
     protagonistRole: string;
+    journeyGoal: string;
     declaredCharacters: string[];
   }
 ): { ok: boolean; issues: string[] } {
   const issues: string[] = [];
   if (!text || text.length < 40) issues.push("too-short");
-  if (text.length > 340) issues.push("too-long");
+  // Cross-challenge openings are mid-journey transitions; the lighter 3-part
+  // structure caps at 140 chars target, so the upper bound is tightened.
+  const upperLength = ctx.variant === "cross_challenge" ? 220 : 340;
+  if (text.length > upperLength) issues.push("too-long");
   if (/\{\{|\bundefined\b|\bnull\b/.test(text)) issues.push("placeholder-leak");
   if (/^【|【第\s*\d+\s*章】|【第一幕】|欢迎来到/.test(text)) issues.push("meta-preamble");
   if (/"学员"|\b您\b|\b用户\b/.test(text)) issues.push("third-person-leak");
@@ -237,6 +242,26 @@ function validateOpeningOutput(
   if (ctx.variant === "first" && !/[？?]\s*$/.test(text)) issues.push("no-closing-question");
   if (ctx.variant === "first" && !openingContainsLearnerIdentity(text, ctx.protagonistRole)) {
     issues.push("missing-learner-identity");
+  }
+  // Cross-challenge openings must NOT replay the journey-level intro.
+  // The learner has already been told who they are and what the journey is
+  // for; restating these bloats every transition into a course-overview tone.
+  if (ctx.variant === "cross_challenge") {
+    if (
+      ctx.protagonistRole &&
+      containsLongVerbatimSpan(text, ctx.protagonistRole, 8)
+    ) {
+      issues.push("cross-challenge-replays-protagonist-role");
+    }
+    if (
+      ctx.journeyGoal &&
+      containsLongVerbatimSpan(text, ctx.journeyGoal, 8)
+    ) {
+      issues.push("cross-challenge-replays-journey-goal");
+    }
+    if (/这一段要完成的是|在旅程结束时你将|你需要做到的是/.test(text)) {
+      issues.push("cross-challenge-has-goal-statement");
+    }
   }
   // If artifacts are about to drop, the opening should point at at least one.
   // Do not require the exact full title: good prose often says "屏幕使用时间面板"
@@ -258,6 +283,25 @@ function validateOpeningOutput(
     issues.push(`off-roster-character:${offroster.join(",")}`);
   }
   return { ok: issues.length === 0, issues };
+}
+
+/** True when `text` contains any contiguous span of `source` whose length is
+ *  at least `minLen` characters. Whitespace inside both strings is collapsed
+ *  so that minor whitespace differences don't defeat the check. */
+function containsLongVerbatimSpan(
+  text: string,
+  source: string,
+  minLen: number
+): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, "");
+  const t = norm(text);
+  const s = norm(source);
+  if (s.length < minLen || t.length < minLen) return false;
+  for (let i = 0; i + minLen <= s.length; i++) {
+    const window = s.slice(i, i + minLen);
+    if (t.includes(window)) return true;
+  }
+  return false;
 }
 
 function artifactReferenced(text: string, artifactName: string): boolean {
@@ -297,15 +341,24 @@ function fallbackOpening(
     pendingArtifacts && pendingArtifacts.length > 0
       ? `桌上放着一份《${pendingArtifacts[0].name}》，你可以先翻一翻。`
       : "";
-  const prefix =
-    variant === "cross_challenge"
-      ? "你把上一幕收在这里，转入下一个场景。"
-      : "";
+  // protagonist_role + journey_goal are journey-level facts; only the
+  // *first* opening should restate them. Cross-challenge openings are
+  // mid-journey transitions — the learner already knows who they are and
+  // what the journey is for, so we drop those lines and let the bridge +
+  // setup carry the moment.
+  if (variant === "cross_challenge") {
+    const body = `${setup} ${artifactHint}`.replace(/\s+/g, " ").trim();
+    return (body || title) + ` ${prompt}`;
+  }
   const roleLine = protagonistRole
-    ? `${normalizeSecondPersonRole(protagonistRole)}。`
+    ? `${normalizeSecondPersonRole(protagonistRole).replace(/[。.!！\s]+$/, "")}。`
     : "";
-  const goalLine = journeyGoal ? `这一段要完成的是：${journeyGoal}。` : "";
-  const body = `${prefix}${roleLine}${goalLine}${setup} ${artifactHint}`.replace(/\s+/g, " ").trim();
+  const goalLine = journeyGoal
+    ? `这一段要完成的是：${journeyGoal.replace(/[。.!！\s]+$/, "")}。`
+    : "";
+  const body = `${roleLine}${goalLine}${setup} ${artifactHint}`
+    .replace(/\s+/g, " ")
+    .trim();
   return (body || title) + ` ${prompt}`;
 }
 

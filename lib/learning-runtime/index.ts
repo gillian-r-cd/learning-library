@@ -14,6 +14,7 @@ import {
   getOrInitLadderProgress,
   incrementLadderAdvances,
   escalateLadderPosition,
+  incrementSameRungAttempts,
 } from "@/lib/state-manager";
 import { runJudge, DEFAULT_ACTION_SPACE_RULES } from "@/lib/judge";
 import { runNarrator } from "@/lib/narrator";
@@ -47,6 +48,13 @@ import {
   shouldEscalateLadder,
   type StructuredResponseInput,
 } from "@/lib/learning-runtime/response-frames";
+import {
+  findFrameOption,
+  isOffTargetOption,
+  pickMisreadingForOption,
+  pickMisreadingFromJudge,
+  shouldEnterReviewFromJudge,
+} from "@/lib/learning-runtime/rung-review";
 
 export interface DroppedArtifactSummary {
   artifact_id: string;
@@ -150,16 +158,54 @@ export async function runTurn(args: {
       })
     : [];
 
-  // 3a. Ladder-aware: if the active frame is a narrative_choice and the
-  //     learner submitted a structured response, branch to the lightweight
-  //     "narrative_advance" path. We synthesise the JudgeOutput instead of
-  //     running the Judge LLM, so this turn is fast, costs no tokens for
-  //     scoring, and produces no grade. Narrator runs in NARRATIVE_BEAT mode
-  //     using the chosen option's narrative_payoff.
+  // 3a. Pre-compute the rung the learner is currently sitting on. This is
+  //     the rung Judge / runtime grade against; the post-turn rung
+  //     (which is what Narrator will introduce next) is recomputed after
+  //     bookkeeping further below.
+  //
+  //     If the learner hasn't initialised ladder_progress yet (first turn of
+  //     a fresh challenge), fall back to the challenge's
+  //     default_ladder_position so off_target short-circuit can still fire.
+  const challengeAtTurnEntry = bpForHooks?.step3_script?.chapters
+    .find((c) => c.chapter_id === preTurnPosition.chapter_id)
+    ?.challenges.find((c) => c.challenge_id === preTurnPosition.challenge_id);
+  const ladderAtTurnEntry = challengeAtTurnEntry?.scaffold_ladder;
+  const ladderProgressAtTurnEntry =
+    snapshot.learner.ladder_progress?.[preTurnPosition.challenge_id] ?? null;
+  const rungAtTurnEntryPosition =
+    ladderProgressAtTurnEntry?.position ??
+    challengeAtTurnEntry?.default_ladder_position ??
+    0;
+  const rungAtTurnEntry: import("@/lib/types/core").ScaffoldLadderRung | null =
+    ladderAtTurnEntry && ladderAtTurnEntry.length > 0
+      ? ladderAtTurnEntry[
+          Math.min(Math.max(rungAtTurnEntryPosition, 0), ladderAtTurnEntry.length - 1)
+        ] ?? null
+      : null;
+
+  // 3b. Branching paths into Judge:
+  //   (i)   narrative_choice + structured response → synth narrative_advance.
+  //   (ii)  single_choice rung where the learner picked an off_target option →
+  //         synth enter_review (skip Judge LLM; runtime owns the routing).
+  //   (iii) anything else → run Judge LLM normally.
   const activeFrame = snapshot.active_response_frame;
   const isNarrativeChoice =
     activeFrame?.kind === "narrative_choice" && !!structuredResponse;
+  const offTargetOptionPick =
+    !isNarrativeChoice &&
+    activeFrame?.kind === "single_choice" &&
+    !!structuredResponse
+      ? findFrameOption(activeFrame, structuredResponse.values?.choice)
+      : null;
+  const isOffTargetShortCircuit =
+    rungAtTurnEntry?.kind === "single_choice" &&
+    !!rungAtTurnEntry.model_judgment &&
+    isOffTargetOption(offTargetOptionPick);
   let chosenNarrativePayoff = "";
+  /** Set to non-empty by either the off_target short-circuit OR the post-Judge
+   *  upgrade path; consumed by Narrator dispatch a few blocks below. */
+  let reviewModelJudgment = "";
+  let reviewSelectedMisreading = "";
   let judgeRes: { output: JudgeOutput; callId: string; traceId: string };
   if (isNarrativeChoice) {
     const choiceField = activeFrame.fields?.find((f) => f.field_id === "choice");
@@ -190,6 +236,46 @@ export async function runTurn(args: {
       callId: `synth_narrative_advance_${randomUUID().slice(0, 6)}`,
       traceId,
     };
+  } else if (isOffTargetShortCircuit && offTargetOptionPick && rungAtTurnEntry) {
+    const picked = pickMisreadingForOption({
+      rung: rungAtTurnEntry,
+      option: offTargetOptionPick,
+    });
+    reviewModelJudgment = rungAtTurnEntry.model_judgment ?? "";
+    reviewSelectedMisreading = picked.description;
+    const optionDimHint =
+      offTargetOptionPick.cognitive_signal?.tag ??
+      rungAtTurnEntry.common_misreadings?.[0]?.dim_id ??
+      "d1";
+    judgeRes = {
+      output: {
+        quality: [
+          {
+            dim_id: optionDimHint,
+            grade: "poor",
+            evidence: `learner picked off_target option ${offTargetOptionPick.value}`,
+          },
+        ],
+        diagnosis: {
+          stuck_reason: "concept_confusion",
+          evidence: `enter_review · off_target · option=${offTargetOptionPick.value} · misreading_source=${picked.reason}`,
+          focus_dim_ids: [optionDimHint],
+          missing_field_ids: [],
+          confidence: "high",
+        },
+        path_decision: {
+          type: "enter_review",
+          target: null,
+          scaffold_spec: null,
+        },
+        narrator_directive: "",
+        companion_dispatch: [],
+        event_triggers: [],
+        next_response_frame: null,
+      },
+      callId: `synth_enter_review_${randomUUID().slice(0, 6)}`,
+      traceId,
+    };
   } else {
     judgeRes = await runJudge({
       snapshot,
@@ -200,6 +286,44 @@ export async function runTurn(args: {
       activeCompanionHooks,
       helpRequest: args.helpRequest ?? null,
     });
+    // Post-Judge upgrade: form / free_text rungs that have been missed twice
+    // in a row should be flipped from {retry|scaffold} → enter_review so
+    // Narrator gives the answer instead of more hinting.
+    const sameRungAttemptsIncludingThisTurn =
+      (ladderProgressAtTurnEntry?.same_rung_attempts ?? 0) + 1;
+    if (
+      shouldEnterReviewFromJudge({
+        rung: rungAtTurnEntry,
+        judgeOutput: judgeRes.output,
+        sameRungAttemptsIncludingThisTurn,
+      }) &&
+      rungAtTurnEntry
+    ) {
+      const picked = pickMisreadingFromJudge({
+        rung: rungAtTurnEntry,
+        judgeOutput: judgeRes.output,
+      });
+      reviewModelJudgment = rungAtTurnEntry.model_judgment ?? "";
+      reviewSelectedMisreading = picked.description;
+      judgeRes = {
+        ...judgeRes,
+        output: {
+          ...judgeRes.output,
+          path_decision: {
+            type: "enter_review",
+            target: null,
+            scaffold_spec: null,
+          },
+          diagnosis: {
+            ...judgeRes.output.diagnosis,
+            evidence:
+              `enter_review · attempts=${sameRungAttemptsIncludingThisTurn} · misreading_source=${picked.reason}`,
+          },
+          companion_dispatch: [],
+          event_triggers: [],
+        },
+      };
+    }
   }
 
   // 3b. Ladder gating on complete_challenge: if Judge wants to close the
@@ -476,6 +600,40 @@ export async function runTurn(args: {
         ? incrementLadderAdvances(args.learnerId, preTurnPosition.challenge_id)
         : (getLearnerState(args.learnerId)?.ladder_progress ?? {})[preTurnPosition.challenge_id] ??
           null;
+    // Track failed attempts at the same rung so the next miss can flip to
+    // enter_review. Skip when the turn is itself an enter_review beat (we
+    // escalate after the beat instead) or when the learner just earned a good.
+    if (
+      progress &&
+      judgeRes.output.path_decision.type !== "narrative_advance" &&
+      judgeRes.output.path_decision.type !== "enter_review"
+    ) {
+      const qualityList = judgeRes.output.quality ?? [];
+      const earnedAnyGood =
+        qualityList.length > 0 && qualityList.some((q) => q.grade === "good");
+      if (!earnedAnyGood) {
+        progress =
+          incrementSameRungAttempts(
+            args.learnerId,
+            preTurnPosition.challenge_id
+          ) ?? progress;
+      }
+    }
+    // enter_review path: escalate the rung WITH partial_via_teach as the
+    // completion kind. The learner was carried through this rung by the
+    // explanation beat, so analytics records that fact and the next rung
+    // becomes active before Narrator runs.
+    if (progress && judgeRes.output.path_decision.type === "enter_review") {
+      const isLastRung = progress.position >= (challengeForRung.scaffold_ladder.length - 1);
+      if (!isLastRung) {
+        const escalated = escalateLadderPosition(
+          args.learnerId,
+          preTurnPosition.challenge_id,
+          "partial_via_teach"
+        );
+        if (escalated) progress = escalated;
+      }
+    }
     if (progress) {
       const currentRungPre = challengeForRung.scaffold_ladder[progress.position];
       const stateNow = getLearnerState(args.learnerId);
@@ -529,6 +687,8 @@ export async function runTurn(args: {
       rungQuestion: currentRung?.rung_question || undefined,
       rungExpectedOutput: currentRung?.rung_expected_output || undefined,
       rungKind: currentRung?.kind || undefined,
+      modelJudgment: reviewModelJudgment || undefined,
+      selectedMisreading: reviewSelectedMisreading || undefined,
       traceId,
       parentSpanId: judgeRes.callId,
     }),

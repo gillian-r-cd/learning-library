@@ -255,6 +255,7 @@ export function normalizeJudgeOutput(
     "branch",
     "complete_challenge",
     "reveal_answer_and_advance",
+    "enter_review",
     "escalate_complexity",
     "simplify_challenge",
   ];

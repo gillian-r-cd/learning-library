@@ -361,6 +361,12 @@ export interface NarratorArgs {
   rungQuestion?: string;
   rungExpectedOutput?: string;
   rungKind?: string;
+  /** Only set when judgeOutput.path_decision.type === "enter_review".
+   *  The designer-authored canonical answer Narrator must state directly. */
+  modelJudgment?: string;
+  /** Only set when judgeOutput.path_decision.type === "enter_review".
+   *  The misreading explanation Narrator must weave into the beat. */
+  selectedMisreading?: string;
   traceId: string;
   parentSpanId?: string;
 }
@@ -407,11 +413,28 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
     ? args.snapshot.rubric_column[boundActionId] ?? {}
     : {};
 
-  const judgeQuality = (args.judgeOutput.quality ?? []).map((q) => ({
-    dim_id: q.dim_id,
-    grade: q.grade,
-    evidence: q.evidence,
-  }));
+  const isReviewBeat =
+    (args.judgeOutput.path_decision?.type ?? "") === "enter_review";
+  // In review mode Narrator MUST NOT see Judge's per-dim grades or stuck
+  // diagnosis — those are evaluative cues that pull the prose back into
+  // hint-language. The designer-authored model_judgment + selected_misreading
+  // are the only content Narrator gets, so its only path is direct exposition.
+  const judgeQuality = isReviewBeat
+    ? []
+    : (args.judgeOutput.quality ?? []).map((q) => ({
+        dim_id: q.dim_id,
+        grade: q.grade,
+        evidence: q.evidence,
+      }));
+  const judgeDiagnosisForPrompt = isReviewBeat
+    ? {
+        stuck_reason: "none",
+        evidence: "(review-mode: Judge 评分细节对 Narrator 屏蔽)",
+        focus_dim_ids: [],
+        missing_field_ids: [],
+        confidence: "low" as const,
+      }
+    : args.judgeOutput.diagnosis;
 
   const companionDispatch = (args.judgeOutput.companion_dispatch ?? [])
     .filter((d) => d.role === "speaker")
@@ -498,7 +521,7 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
       // Block 3 · this-turn dynamics
       learner_input: learnerInput,
       judge_quality: judgeQuality,
-      judge_diagnosis: args.judgeOutput.diagnosis,
+      judge_diagnosis: judgeDiagnosisForPrompt,
       judge_path_decision: args.judgeOutput.path_decision ?? {
         type: "advance",
         target: null,
@@ -508,11 +531,17 @@ export async function runNarrator(args: NarratorArgs): Promise<{ text: string; c
         args.judgeOutput.path_decision?.scaffold_spec?.strategy ?? "",
       scaffold_notes:
         args.judgeOutput.path_decision?.scaffold_spec?.notes ?? "",
-      narrator_directive: args.judgeOutput.narrator_directive ?? "",
+      // narrator_directive is intentionally suppressed in review mode — the
+      // designer-authored model_judgment/selected_misreading take its place.
+      narrator_directive: isReviewBeat
+        ? ""
+        : args.judgeOutput.narrator_directive ?? "",
       chosen_narrative_payoff: args.chosenNarrativePayoff ?? "",
       rung_question: args.rungQuestion ?? "",
       rung_expected_output: args.rungExpectedOutput ?? "",
       rung_kind: args.rungKind ?? "",
+      model_judgment: isReviewBeat ? (args.modelJudgment ?? "") : "",
+      selected_misreading: isReviewBeat ? (args.selectedMisreading ?? "") : "",
       signals_hit_so_far: signalsHit,
       learner_total_turns: totalLearnerTurns,
       challenge_turn_idx: args.snapshot.learner.position.turn_idx,
@@ -554,13 +583,17 @@ function validateNarratorOutput(
     issues.push("empty");
     return { ok: false, issues };
   }
-  // Scaffold mode produces longer, content-heavy text (worked examples,
-  // paired contrastive cases, walkthroughs). Relax the upper bound there.
+  // Scaffold / review modes produce longer, content-heavy text (worked
+  // examples, paired contrastive cases, walkthroughs, or the explanation
+  // beat that gives the answer outright). Relax the upper bound there.
   const isScaffoldMode =
     ctx.pathDecisionType === "scaffold" ||
     ctx.pathDecisionType === "simplify_challenge";
+  const isReviewMode = ctx.pathDecisionType === "enter_review";
   if (text.length < 30) issues.push("too-short");
-  if (text.length > (isScaffoldMode ? 320 : 260)) issues.push("too-long");
+  if (text.length > (isScaffoldMode || isReviewMode ? 360 : 260)) {
+    issues.push("too-long");
+  }
   if (/\{\{|\bundefined\b|\bnull\b/.test(text)) issues.push("placeholder-leak");
   if (/^【/.test(text)) issues.push("title-prefix");
   if (/👉|```/.test(text)) issues.push("forbidden-symbol");
@@ -604,6 +637,19 @@ function validateNarratorOutput(
   // a challenge, not scaffolding through one).
   if (ctx.pathDecisionType === "complete_challenge" && /[？?]/.test(text)) {
     issues.push("closing-turn-has-question");
+  }
+  // enter_review beats must NOT end on a question, must NOT pull the prose
+  // back into hint mode. Question marks anywhere = regression. Hedging /
+  // probing phrases that ask the learner to reconsider also bounce.
+  if (isReviewMode) {
+    if (/[？?]/.test(text)) issues.push("review-has-question");
+    if (
+      /(你是否|你愿意|你能不能|要不要|你觉得.*[吗呢]|再想一下|重新对应|是否略|是否再|换个角度想)/.test(
+        text
+      )
+    ) {
+      issues.push("review-has-hedge");
+    }
   }
   // HARD GUARDRAIL: no off-whitelist declared character names.
   const nameSet = new Set(ctx.nameableCharacters);

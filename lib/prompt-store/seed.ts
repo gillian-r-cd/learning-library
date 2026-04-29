@@ -561,6 +561,23 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "- default_response_frame_id 指向默认使用的 frame。通常第一轮用 free_text；若 setup 明确要求拆表填写，可默认用 form。\n" +
         "- 字段必须稳定、少而精：每个 form 2-5 个 fields；每个 required 字段都要真的服务于 expected_signals。\n" +
         "\n" +
+        "## scaffold_ladder rung 的解读素材（最高优先级，每条 graded rung 都必填）\n" +
+        "为了支持「学员答错时直接给答案、不再绕圈子」，每个会被评分的 rung（kind ∈ {single_choice, form, free_text}）都要提供下列两个字段（写在 rung 对象上）：\n" +
+        "- `model_judgment`（≥40 字）：本 rung 对应的标准读法 + 关键理由。直接陈述句，必须用案例里具体的人名、邮件、数据，**不能**写成抽象总结。例：「林小雨在这件事上意愿清楚，主动写出『需要向客服部调取』；能力那端三处待补的都是她半年内还没走通的信息路径。准确读法是能力低、意愿高。」\n" +
+        "- `common_misreadings[]`（2-3 条）：本 rung 上典型的偏读方向。每条形如 `{ \"dim_id\": \"<rubric dim_id>\", \"description\": \"<≥30 字>\" }`。description 要点出学员把哪一层混淆成了哪一层、为什么这样读不对，仍然用案例细节说话。条数对应 rubric 中可能被偏到的 dim 数量。\n" +
+        "\n" +
+        "这两个字段会在两个时刻被运行时拿来用：\n" +
+        "(a) 学员在 single_choice rung 选了一个 `judgment_kind=off_target` 的选项 → 立即触发解读 beat，runtime 把 `model_judgment` 加上选项自带的 `option_specific_misreading`（或匹配 dim 的 common_misreading）交给 Narrator。\n" +
+        "(b) 学员在 form / free_text rung 同一档连续两次没过 → 触发解读 beat，runtime 用 Judge 评最差 dim 匹配的 common_misreading。\n" +
+        "\n" +
+        "## single_choice rung 选项的 judgment_kind（每个选项必填）\n" +
+        "对 kind=single_choice 的 rung，每个选项除了 value/label 外，必须再加：\n" +
+        "- `judgment_kind` ∈ {target, defensible, off_target}\n" +
+        "  - target：标准答案（恰好 1 个）\n" +
+        "  - defensible：可接受的偏读（partial mastery；通常 1-2 个）\n" +
+        "  - off_target：明显偏读（剩下的全部）\n" +
+        "- `option_specific_misreading`（可选，只对 off_target 选项有意义，≥30 字）：如果该 off_target 选项有非常明确的、不能用 common_misreadings 覆盖的偏读说明，写在这里。runtime 会优先使用它。\n" +
+        "\n" +
         "## artifacts（道具）硬要求\n" +
         "- 场景中被 setup / narrative_premise 提到的关键物件（周报、简历、邮件、档案、KPI 报表、清单、组织图、对话截图等）必须以 artifact 的形式呈现，让学员可以'翻阅'而非只靠脑补。\n" +
         "- 每个挑战 0-3 个 artifacts；trigger=on_challenge_enter 的至多 1 个（避免开场信息过载）。\n" +
@@ -833,6 +850,7 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "- quality.grade ∈ {good, medium, poor}\n" +
         "- diagnosis.stuck_reason ∈ {none, missing_context, missing_evidence, concept_confusion, cognitive_overload, transfer_failure, surface_level, self_help, frustration}\n" +
         "- path_decision.type ∈ {advance, retry, scaffold, branch, complete_challenge, reveal_answer_and_advance, escalate_complexity, simplify_challenge}\n" +
+        "  注：还有一个 `enter_review` 路径由 runtime 自己决定（学员单选选到明显偏读项，或同档连续两次没过且该档配了 model_judgment）。**不要在 Judge 输出里主动给 enter_review**。runtime 会按规则把你的 path_decision 升级为 enter_review，并接管 Narrator 该轮的内容来源。\n" +
         "- scaffold_spec.strategy ∈ {worked_example, contrastive_cases, chunked_walkthrough, analogy_bridge, retrieval_prompt, near_transfer_demo, concept_scaffold, self_explanation}（path ∈ {scaffold, simplify_challenge,reveal_answer_and_advance} 时必须给出 strategy；其他 path 时 scaffold_spec = null）\n" +
         "- companion_dispatch[].role ∈ {speaker, silent}\n" +
         "\n" +
@@ -1128,6 +1146,7 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "   - `scaffold` → **进入 SCAFFOLD 模式**（见下方「SCAFFOLD 模式产出规则」，按 scaffold_spec.strategy 的 8 种之一严格执行）。\n" +
         "   - `simplify_challenge` → **进入 SCAFFOLD 模式 + 硬切 worked_example 策略**（见下方「simplify_challenge 专用规则」）。\n" +
         "   - `reveal_answer_and_advance` → **进入 REVEAL 模式**。直接给出参考答案、关键依据和一句承接。严禁继续追问，严禁要求学员再补答。\n" +
+        "   - `enter_review` → **进入 REVIEW 模式**（见下方「REVIEW 模式产出规则」）。直接复述设计阶段写好的正确读法 + 偏读说明，**禁止任何问句、禁止暗示、禁止要求学员再答一次**。\n" +
         "   - `complete_challenge` → **只做收束**：1-2 句肯定学员在本挑战建立的关键认知；**严禁**在这段里提问、引入新人物/新场景。\n" +
         "   - `escalate_complexity` → 升维或换一个更复杂情境，但仍在当前挑战主题。\n" +
         "6. **结合 Judge 的 `judge_quality`**：若某个 dim 被打了 medium/poor，你的追问要**瞄准那个 dim 的 rubric medium→good 差距**（rubric_column 里能看到该 dim 的 good/medium/poor 描述）。\n" +
@@ -1225,7 +1244,35 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
         "- 输出 120-220 字。第一句承认学员当前卡住，不做安抚套话。\n" +
         "- 必须直接给出一段参考答案或可接受答案。答案要贴合当前 challenge_setup、rubric 和 expected_signals。\n" +
         "- 必须用 1-2 句解释这个答案为什么成立，解释要引用具体线索或道具事实。\n" +
-        "- 末句只能做承接，告诉学员这题到这里收束，下一步换到新情境继续练。严禁再提问。\n",
+        "- 末句只能做承接，告诉学员这题到这里收束，下一步换到新情境继续练。严禁再提问。\n" +
+        "\n" +
+        "## REVIEW 模式产出规则（仅当 judge_path_decision.type = enter_review 时激活，最高优先级）\n" +
+        "**触发情景**：学员在单选里选了明显偏读的选项，或同一档连续两次没过，系统决定停止追问、直接讲清楚答案。这一段不是再次提问，是把设计阶段写好的解释翻成通顺的中文交付给学员。\n" +
+        "\n" +
+        "**素材来源（只用这两条，禁止自创内容）**：\n" +
+        "- `model_judgment`：本档对应的标准读法 + 理由。直接陈述句，可能含具体人物姓名。这是答案。\n" +
+        "- `selected_misreading`：与学员本轮偏差方向最匹配的一种典型偏读说明。这是「为什么学员这样答不对」。\n" +
+        "\n" +
+        "**输出结构（120-220 字）**：\n" +
+        "1. 一句过渡，承接学员动作（不要安抚、不要评判）。\n" +
+        "2. 用案例里的人名 / 邮件 / 数据 / 时间这些具体细节展开 model_judgment，把正确读法写成完整一两句话。\n" +
+        "3. 把 selected_misreading 翻成 1-2 句通顺中文，指出学员这样答把哪一层混淆成了哪一层。\n" +
+        "4. 一句承接，让位给学员，告诉他这题到这里收束。\n" +
+        "\n" +
+        "**硬约束（违反即重写）**：\n" +
+        "- 全段**不得出现问句**（任何 ？ ?），不出现「你是否」「你愿意」「你能不能」「要不要」「再想一下」「重新对应」「换个角度想」这类句式。这一段是答案交付，不是引导提问。\n" +
+        "- 严禁说「你刚才的判断是否略保守」「你愿意重新对应档位吗」这类半藏半露的暗示句。\n" +
+        "- 严禁要求学员再答一次、再选一次、再写一次。\n" +
+        "- 严禁透露 Judge 的评分（「d2 维度还差点」之类），评分细节本轮根本不在你的视野里。\n" +
+        "- 严禁套用「想一想」「思考一下」这类虚指令。\n" +
+        "- 必须用案例里的具体细节说话（人名、邮件原话、数据、动作），不要抽象总结。\n" +
+        "- 末句让位给学员，下一档的输入控件已经亮起，不要替学员决定下一步该做什么。\n" +
+        "\n" +
+        "**范例 1（单选 off_target，把能力高/意愿高混成能力低/意愿高）**：\n" +
+        "「你把诊断表合上。林小雨在这件事上，意愿这一端是清楚的，她在邮件里直接写「需要向客服部调取」，主动说出来，没有回避。能力那端要分开看：历史工单、满意度数据、竞品对比，三处待补对应的都是她六个月内还没走通的信息路径。一个入职半年的新人头一次独立操盘这类方案，跨部门取数的渠道本来就没建起来，独力补不上是预期之内的事，跟态度无关。准确读法是能力低、意愿高。把这条记下来，接下来轮到你把它落到具体动作上。」\n" +
+        "\n" +
+        "**范例 2（连续两次没过，把意愿低写成能力低）**：\n" +
+        "「你把笔搁下。王磊近两个月对新流程不接茬，看上去是「不会」，但他过去一年的客户复购率拉到全组第一，方法也都是他自己摸索出来的。能力上他不缺。差的是这次他被跳过了晋升、对新流程心里有股怨气，客户清单他还在按老格式手写，新系统的字段一个没填。这是意愿那端的低，不是能力那端的低。把这一段稳住，下一档轮到你给他写一段开口台词。」\n",
       messages: [
         {
           role: "user",
@@ -1270,7 +1317,11 @@ const BUILTINS: [string, PromptBody, string][] = withStyleGuard([
             "Judge path_decision：{{judge_path_decision}}\n" +
             "Scaffold 策略（仅当 path ∈ {scaffold, simplify_challenge} 时非空；此时你必须执行「SCAFFOLD 模式产出规则」下对应那一条）：{{scaffold_strategy}}\n" +
             "Scaffold 备注（Judge 可能在 scaffold_spec.notes 里写本轮要特别突出的点）：{{scaffold_notes}}\n" +
-            "Judge narrator_directive（语义目标，不是要抄的文字）：{{narrator_directive}}\n" +
+            "Judge narrator_directive（语义目标，不是要抄的文字；review 模式下为空）：{{narrator_directive}}\n" +
+            "\n" +
+            "[review 模式专用素材，仅在 judge_path_decision.type = enter_review 时非空]\n" +
+            "ModelJudgment（本档标准答案 + 理由，直接陈述）：{{model_judgment}}\n" +
+            "SelectedMisreading（学员本轮偏差方向对应的典型偏读说明）：{{selected_misreading}}\n" +
             "\n" +
             "本挑战累计命中信号（hit=true 已命中；其余是未来 Narrator 要牵引的靶子）：{{signals_hit_so_far}}\n" +
             "\n" +

@@ -715,7 +715,19 @@ function mockNarrator(variables: Record<string, unknown>): MockResult {
   const personName = characters[0] ? characters[0].name : "他";
 
   let text: string;
-  if (pathType === "complete_challenge") {
+  if (pathType === "enter_review") {
+    // Review beat: state the canonical answer + reasoning + where the
+    // learner went off, no questions, no hedging. Pulls verbatim from the
+    // designer-authored payload that runtime fed in.
+    const modelJudgment = String(variables.model_judgment ?? "").trim();
+    const selectedMisreading = String(variables.selected_misreading ?? "").trim();
+    const baseAnswer = modelJudgment ||
+      `这道题的准确读法应当先把信号拆开看，再合起来下判断。`;
+    const misreadingTail = selectedMisreading
+      ? ` ${selectedMisreading}`
+      : ` 学员这一答把表层信号当成了底层判断的依据，跳过了证据这一层。`;
+    text = `${baseAnswer}${misreadingTail}`;
+  } else if (pathType === "complete_challenge") {
     text =
       `你刚才关于${echo}的判断已经立得住脚——从表层现象走到了底层状态，还给出了具体依据。` +
       `把这一段收在这里，你已经在${personRef}这条线索上建立起一个可靠的判断框架。`;

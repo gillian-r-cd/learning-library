@@ -245,8 +245,35 @@ export function incrementLadderAdvances(
   return next;
 }
 
-/** Move the learner to the next ladder position, resetting advances counter. */
+/** Move the learner to the next ladder position, resetting advances counter
+ *  and the same-rung attempt counter. Caller may record how the rung was
+ *  cleared (independent vs partial_via_teach) so downstream analytics knows
+ *  whether the explanation beat carried this rung. */
 export function escalateLadderPosition(
+  learnerId: string,
+  challengeId: string,
+  completionKind?: "independent" | "partial_via_teach"
+): import("@/lib/types/core").LadderProgress | null {
+  const s = getLearnerState(learnerId);
+  if (!s || !s.ladder_progress) return null;
+  const cur = s.ladder_progress[challengeId];
+  if (!cur) return null;
+  const next: import("@/lib/types/core").LadderProgress = {
+    ...cur,
+    position: cur.position + 1,
+    advances_at_position: 0,
+    same_rung_attempts: 0,
+    last_completion_kind: completionKind ?? cur.last_completion_kind,
+    updated_at: new Date().toISOString(),
+  };
+  s.ladder_progress[challengeId] = next;
+  saveLearnerState(s);
+  return next;
+}
+
+/** Increment the same-rung attempt counter (called after a graded turn that
+ *  did NOT pass at the current rung, so the next turn carries the count). */
+export function incrementSameRungAttempts(
   learnerId: string,
   challengeId: string
 ): import("@/lib/types/core").LadderProgress | null {
@@ -254,10 +281,9 @@ export function escalateLadderPosition(
   if (!s || !s.ladder_progress) return null;
   const cur = s.ladder_progress[challengeId];
   if (!cur) return null;
-  const next = {
+  const next: import("@/lib/types/core").LadderProgress = {
     ...cur,
-    position: cur.position + 1,
-    advances_at_position: 0,
+    same_rung_attempts: (cur.same_rung_attempts ?? 0) + 1,
     updated_at: new Date().toISOString(),
   };
   s.ladder_progress[challengeId] = next;

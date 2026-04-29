@@ -163,6 +163,19 @@ export interface ResponseOption {
      *  decides per option. */
     tag: string;
   };
+  /** Only used for single_choice rungs that drive a graded judgment.
+   *  Skill 3 Fill tags every option as one of:
+   *   - "target":     the canonical correct read for the rung.
+   *   - "defensible": a partially correct read that still demonstrates progress;
+   *                   runtime may advance with mastery=partial.
+   *   - "off_target": clearly wrong read; runtime short-circuits to enter_review,
+   *                   handing the learner a Narrator explanation beat. */
+  judgment_kind?: "target" | "defensible" | "off_target";
+  /** Optional designer-authored explanation for an `off_target` option.
+   *  When present, runtime uses this verbatim as the selected misreading
+   *  passed to Narrator instead of picking from the rung's
+   *  common_misreadings array. */
+  option_specific_misreading?: string;
 }
 
 export interface ResponseField {
@@ -264,6 +277,23 @@ export interface ScaffoldLadderRung {
    *  earlier rung / earlier challenge) for this rung to be valid. Runtime
    *  uses this to validate concept ordering at design time. */
   required_concepts?: string[];
+  /** Designer-authored "model judgment" for this rung — what the canonical
+   *  correct read is, with named details from the case (≥40 chars). Used
+   *  verbatim as Narrator content when the rung enters review mode (either
+   *  because the learner picked an off_target single_choice option, or
+   *  because they failed the rung twice). Skill 3 Fill writes this. */
+  model_judgment?: string;
+  /** Designer-authored bank of common misreadings on this rung, one per
+   *  typical wrong direction. Each entry binds to a rubric dim_id so the
+   *  runtime can pick the entry whose dim matches Judge's worst-graded dim
+   *  on form / free_text rungs. For single_choice, an option's
+   *  option_specific_misreading takes priority. */
+  common_misreadings?: Array<{
+    dim_id: string;
+    /** ≥30-char prose explaining what learners typically get wrong on this
+     *  dim and why. Will be handed to Narrator alongside model_judgment. */
+    description: string;
+  }>;
 }
 
 export interface Challenge {
@@ -627,6 +657,14 @@ export interface LadderProgress {
   /** Last action this challenge's ladder is anchored to (the first
    *  binds_action; recorded for clarity). */
   action_id: string;
+  /** Number of non-passing attempts the learner has made AT THE CURRENT rung.
+   *  Reset to 0 on rung escalation. Drives the "after 2 misses, give the
+   *  explanation beat" rule for form / free_text rungs. */
+  same_rung_attempts?: number;
+  /** When the learner advanced past this rung, was it via independent
+   *  mastery, or did they get the explanation beat first? Persisted for the
+   *  most recent escalation per challenge. */
+  last_completion_kind?: "independent" | "partial_via_teach";
   updated_at: string;
 }
 
@@ -719,6 +757,15 @@ export type PathDecisionType =
   | "branch"
   | "complete_challenge"
   | "reveal_answer_and_advance"
+  /** The "explanation beat" path: the learner is owed a direct read of the
+   *  current rung's model_judgment (with selected_misreading) instead of any
+   *  more hinting. Triggered by:
+   *   (a) a single_choice rung where the learner picked an off_target option, or
+   *   (b) a graded rung where same_rung_attempts >= 2 and the rung's
+   *       model_judgment is authored.
+   *  Mastery for the rung is recorded as `partial_via_teach`; runtime
+   *  escalates the ladder one rung after the beat. */
+  | "enter_review"
   | "escalate_complexity"
   /** Continuous failure (≥5 all-poor turns OR explicit self-help signal).
    *  Runtime switches to a combined worked_example + contrastive_cases

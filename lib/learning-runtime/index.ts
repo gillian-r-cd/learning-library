@@ -754,6 +754,14 @@ export async function runTurn(args: {
     });
   }
   if (applied.newUnlocks.length > 0) {
+    // Resolve companion_ids to learner-facing display_name. Falls back to the
+    // raw id only when the blueprint truly has no entry for it (which would
+    // itself be a design-time bug worth surfacing in the meta).
+    const companionRoster = bpForHooks?.step4_companions?.companions ?? [];
+    const unlockedNames = applied.newUnlocks.map((id) => {
+      const def = companionRoster.find((c) => c.companion_id === id);
+      return def?.display_name?.trim() || id;
+    });
     appendConversation({
       learner_id: args.learnerId,
       turn_idx: preTurnPosition.turn_idx,
@@ -761,7 +769,7 @@ export async function runTurn(args: {
       challenge_id: preTurnPosition.challenge_id,
       role: "system",
       who: "unlock",
-      text: `🎉 解锁了：${applied.newUnlocks.join(", ")}`,
+      text: `🎉 解锁了：${unlockedNames.join("、")}`,
       trace_id: traceId,
       meta: { kind: "unlock", companion_ids: applied.newUnlocks },
     });

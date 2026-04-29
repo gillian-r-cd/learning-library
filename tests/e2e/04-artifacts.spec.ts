@@ -40,16 +40,18 @@ test.describe("Artifacts system · 道具功能全流程", () => {
     const count = await page.getByTestId("artifact-inbox-count").innerText();
     expect(Number(count)).toBeGreaterThanOrEqual(1);
 
-    // 点击气泡 → 打开 modal → 渲染器应可见
-    await artifactBubble.first().click();
-    await expect(page.getByTestId("artifact-modal")).toBeVisible();
-    // at least one renderer visible
-    const anyRenderer = page.locator(
-      "[data-test-id^='renderer-']"
-    );
+    // 点击气泡 → 原地展开（不再开 modal） → 完整渲染器应可见
+    const firstBubble = artifactBubble.first();
+    await firstBubble.click();
+    await expect(firstBubble).toHaveAttribute("data-expanded", "1");
+    // 应该不存在 modal（原地展开后没有遮罩弹窗）
+    await expect(page.getByTestId("artifact-modal")).toHaveCount(0);
+    // 渲染器在气泡内部可见
+    const anyRenderer = firstBubble.locator("[data-test-id^='renderer-']");
     await expect(anyRenderer.first()).toBeVisible();
-    await page.getByTestId("artifact-modal-close").click();
-    await expect(page.getByTestId("artifact-modal")).not.toBeVisible();
+    // 收起按钮也在气泡内
+    await page.getByTestId("artifact-collapse").click();
+    await expect(firstBubble).toHaveAttribute("data-expanded", "0");
   });
 
   test("Scenario B — 打开道具箱面板查看已掉落道具", async ({ page, baseURL }) => {
